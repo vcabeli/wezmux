@@ -1,0 +1,93 @@
+#!/bin/bash
+# wezmux claude wrapper — injects notification hooks into Claude Code
+# When running inside wezmux (WEZMUX=1), this wrapper adds hooks that emit
+# OSC 9 escape sequences so the sidebar can show agent status and notifications.
+# Outside wezmux, it passes through to the real claude binary unchanged.
+
+set -euo pipefail
+
+# Find the real claude binary (skip this wrapper)
+find_real_claude() {
+    local self_dir
+    self_dir="$(cd "$(dirname "$0")" && pwd)"
+    local IFS=':'
+    for dir in $PATH; do
+        if [ "$dir" != "$self_dir" ] && [ -x "$dir/claude" ]; then
+            echo "$dir/claude"
+            return 0
+        fi
+    done
+    echo "wezmux: cannot find real 'claude' binary in PATH" >&2
+    exit 127
+}
+
+REAL_CLAUDE="$(find_real_claude)"
+
+# If not inside wezmux, pass through unchanged
+if [ -z "${WEZMUX:-}" ]; then
+    exec "$REAL_CLAUDE" "$@"
+fi
+
+# Resolve hook scripts directory (next to this wrapper)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)/hooks"
+
+# Build settings JSON with notification hooks
+SETTINGS_JSON=$(cat <<'ENDJSON'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-stop.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-notification.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-prompt-submit.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+ENDJSON
+)
+
+# Replace placeholder with actual hook dir path
+SETTINGS_JSON="${SETTINGS_JSON//HOOK_DIR_PLACEHOLDER/$HOOK_DIR}"
+
+# Check if user already passed --settings
+has_settings=false
+for arg in "$@"; do
+    if [ "$arg" = "--settings" ]; then
+        has_settings=true
+        break
+    fi
+done
+
+if [ "$has_settings" = true ]; then
+    # User has their own settings; don't override
+    exec "$REAL_CLAUDE" "$@"
+else
+    exec "$REAL_CLAUDE" --settings "$SETTINGS_JSON" "$@"
+fi

@@ -1,0 +1,16 @@
+#!/bin/bash
+# wezmux-notify - Send a notification to the Wezmux sidebar via OSC 9.
+#
+# Usage:
+#   wezmux-notify "Build complete"
+#   wezmux-notify Task finished successfully
+#
+# The notification appears in the sidebar card for the workspace
+# containing the pane where this command runs.
+
+if [ $# -eq 0 ]; then
+    echo "Usage: wezmux-notify <message>" >&2
+    exit 1
+fi
+
+printf '\033]9;%s\a' "$*"
