@@ -39,6 +39,7 @@ pub mod client;
 pub mod connui;
 pub mod domain;
 pub mod localpane;
+pub mod agent_status;
 pub mod notification;
 pub mod pane;
 pub mod renderable;
@@ -114,6 +115,7 @@ pub struct Mux {
     identity: RwLock<Option<Arc<ClientId>>>,
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     notification_store: Mutex<NotificationStore>,
+    agent_status_store: Mutex<agent_status::AgentStatusStore>,
     main_thread_id: std::thread::ThreadId,
     agent: Option<AgentProxy>,
 }
@@ -450,6 +452,7 @@ impl Mux {
             identity: RwLock::new(None),
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             notification_store: Mutex::new(NotificationStore::default()),
+            agent_status_store: Mutex::new(agent_status::AgentStatusStore::default()),
             main_thread_id: std::thread::current().id(),
             agent,
         }
@@ -739,6 +742,39 @@ impl Mux {
                     .lock()
                     .add_notification(*pane_id, workspace, title, body, unread);
             }
+            MuxNotification::Alert {
+                pane_id,
+                alert: wezterm_term::Alert::WezmuxStatus { event, data },
+            } => {
+                let mut store = self.agent_status_store.lock();
+                match event.as_str() {
+                    "status" => {
+                        if let Some(status_str) = data.as_deref() {
+                            let status = match status_str {
+                                "working" => Some(agent_status::AgentStatus::Working),
+                                "idle" => Some(agent_status::AgentStatus::Idle),
+                                "needs_input" => Some(agent_status::AgentStatus::NeedsInput),
+                                _ => None,
+                            };
+                            if let Some(status) = status {
+                                store.update_status(*pane_id, status);
+                            }
+                        }
+                    }
+                    "message" => {
+                        if let Some(msg) = data {
+                            store.update_message(*pane_id, msg.clone());
+                        }
+                    }
+                    "tool" => {
+                        if let Some(tool) = data {
+                            store.update_tool(*pane_id, tool.clone());
+                        }
+                    }
+                    "clear" => store.clear(*pane_id),
+                    _ => log::warn!("unknown wezmux status event: {event}"),
+                }
+            }
             MuxNotification::PaneFocused(pane_id) | MuxNotification::PaneRemoved(pane_id) => {
                 self.notification_store.lock().mark_pane_read(*pane_id);
             }
@@ -794,6 +830,17 @@ impl Mux {
 
     pub fn unread_notification_count_for_workspace(&self, workspace: &str) -> u32 {
         self.notification_store.lock().unread_count(workspace)
+    }
+
+    pub fn agent_status_for_pane(
+        &self,
+        pane_id: PaneId,
+    ) -> Option<agent_status::AgentPaneStatus> {
+        self.agent_status_store.lock().get(pane_id).cloned()
+    }
+
+    pub fn agent_status_generation(&self) -> u64 {
+        self.agent_status_store.lock().generation()
     }
 
     pub fn notify_from_any_thread(notification: MuxNotification) {

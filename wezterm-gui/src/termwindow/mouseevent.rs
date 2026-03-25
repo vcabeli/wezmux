@@ -551,6 +551,9 @@ impl super::TermWindow {
                 }
             }
 
+            // Force sidebar cache rebuild so badge clears immediately
+            self.sidebar.invalidate_cache();
+
             context.invalidate();
         }
         context.set_cursor(Some(MouseCursor::Hand));

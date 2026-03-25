@@ -94,25 +94,13 @@ fn sidebar_pull_request_closed() -> LinearRgba {
 fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarLine> {
     let mut lines = vec![];
 
-    // Notification preview, agent status, or terminal output preview
+    // Agent status with message, falling back to notification text
     if let Some(ref agent) = entry.agent {
-        // Pick the best preview text: terminal buffer > notification > nothing.
-        // When idle, prefer terminal output (shows actual response) over generic
-        // "Claude finished". Fall through if terminal preview is unavailable.
-        let idle_or_unknown =
-            agent.status == AgentStatus::Idle || agent.status == AgentStatus::Unknown;
-        let preview_text = if idle_or_unknown {
-            entry
-                .terminal_preview
-                .as_deref()
-                .or(agent.status_message.as_deref())
-        } else {
-            agent
-                .status_message
-                .as_deref()
-                .or(entry.terminal_preview.as_deref())
-        };
-        if let Some(text) = preview_text {
+        let text = agent
+            .status_message
+            .as_deref()
+            .or(entry.latest_notification.as_deref());
+        if let Some(text) = text {
             for line in wrap_text_to_cells(text, cols, 4) {
                 lines.push(SidebarLine {
                     text: line,
@@ -134,14 +122,6 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarL
                 style: SidebarLineStyle::Preview,
             });
         }
-    } else if let Some(ref preview) = entry.terminal_preview {
-        // Fallback: show last terminal output when no agent or notification
-        for line in wrap_text_to_cells(preview, cols, 4) {
-            lines.push(SidebarLine {
-                text: line,
-                style: SidebarLineStyle::Preview,
-            });
-        }
     }
 
     // Git branch line (always show separately when available)
@@ -153,26 +133,28 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarL
         };
         // Combine with path using separator
         if let Some(path) = sidebar_entry_path(entry) {
+            let meta = format!("{branch_text} \u{2022} {path}");
             lines.push(SidebarLine {
-                text: format!("{branch_text} \u{2022} {path}"),
+                text: truncate_to_cells(&meta, cols),
                 style: SidebarLineStyle::Meta,
             });
         } else {
             lines.push(SidebarLine {
-                text: branch_text,
+                text: truncate_to_cells(&branch_text, cols),
                 style: SidebarLineStyle::Meta,
             });
         }
     } else if let Some(path) = sidebar_entry_path(entry) {
         // No git branch — just show path
         lines.push(SidebarLine {
-            text: path,
+            text: truncate_to_cells(&path, cols),
             style: SidebarLineStyle::Meta,
         });
     }
 
     // PR info
-    if let Some(pull_request) = sidebar_entry_pull_request(entry) {
+    if let Some(mut pull_request) = sidebar_entry_pull_request(entry) {
+        pull_request.text = truncate_to_cells(&pull_request.text, cols);
         lines.push(pull_request);
     }
 
@@ -264,9 +246,9 @@ fn sidebar_pull_request_text(pull_request: &WorkspacePullRequest) -> String {
 
 fn sidebar_pull_request_symbol(status: WorkspacePullRequestStatus) -> &'static str {
     match status {
-        WorkspacePullRequestStatus::Open => "◦",
-        WorkspacePullRequestStatus::Merged => "✓",
-        WorkspacePullRequestStatus::Closed => "✕",
+        WorkspacePullRequestStatus::Open => "\u{f407}",    // oct-git_pull_request
+        WorkspacePullRequestStatus::Merged => "\u{f419}",  // oct-git_merge
+        WorkspacePullRequestStatus::Closed => "\u{f4dc}",  // oct-git_pull_request_closed
     }
 }
 
@@ -385,30 +367,6 @@ fn build_card_element(
         &title_text,
         title_color,
     ));
-
-    // Close button (×) — shown on hover
-    if entry.is_hovered || is_active {
-        let close_color = if is_active {
-            LinearRgba::with_srgba(255, 255, 255, 140)
-        } else {
-            LinearRgba::with_srgba(255, 255, 255, 100)
-        };
-        title_parts.push(
-            Element::new(font, ElementContent::Text("\u{00D7}".to_string()))
-                .item_type(UIItemType::SidebarCloseWorkspace(entry.name.clone()))
-                .colors(ElementColors {
-                    border: BorderColor::default(),
-                    bg: InheritableColor::Inherited,
-                    text: close_color.into(),
-                })
-                .margin(BoxDimension {
-                    left: Dimension::Pixels(4.),
-                    right: Dimension::Pixels(0.),
-                    top: Dimension::Pixels(0.),
-                    bottom: Dimension::Pixels(0.),
-                }),
-        );
-    }
 
     card_children.push(
         Element::new(font, ElementContent::Children(title_parts))
@@ -576,12 +534,16 @@ impl crate::TermWindow {
         let body_font = self.fonts.sidebar_body_font()?;
         let mono_font = Rc::clone(&body_font);
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-        let cell_width = metrics.cell_size.width as f32;
-
-        // Available text width inside cards (sidebar - margins - padding - handle)
+        // Available text width inside cards:
+        // sidebar - handle - card margin (6+6) - card padding (12+12) - border (3)
         let content_width = sidebar_width - handle_width;
-        let text_width = (content_width - 6.0 * 2.0 - 10.0 * 2.0).max(cell_width);
-        let text_cols = (text_width / cell_width).floor().max(1.0) as usize;
+        let card_chrome = 6.0 + 6.0 + 12.0 + 12.0 + 3.0;
+        let text_width = (content_width - card_chrome).max(1.0);
+        // The body font is proportional (Roboto) so cell_size.width is the
+        // widest glyph. Average character width is ~55% of that for Latin text.
+        let body_metrics = RenderMetrics::with_font_metrics(&body_font.metrics());
+        let avg_char_width = body_metrics.cell_size.width as f32 * 0.55;
+        let text_cols = (text_width / avg_char_width).floor().max(1.0) as usize;
 
         // Build Element tree
         let mut root_children: Vec<Element> = vec![];
@@ -614,7 +576,6 @@ impl crate::TermWindow {
         let toolbar_items: Vec<Element> = vec![
             toolbar_button(&font, "\u{25EB}", UIItemType::SidebarSplitHorizontal), // ◫ split left|right
             toolbar_button(&font, "\u{229F}", UIItemType::SidebarSplitVertical),   // ⊟ split top/bottom
-            toolbar_button(&font, "\u{237E}", UIItemType::SidebarNotificationBell), // ⍾ bell
             toolbar_button(&font, "+", UIItemType::SidebarNewWorkspace),
         ];
 
@@ -650,45 +611,6 @@ impl crate::TermWindow {
         for entry in &entries {
             root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, content_width));
         }
-
-        // Footer: settings gear
-        root_children.push(
-            Element::new(&font, ElementContent::Text("\u{2699}".to_string()))
-                .display(DisplayType::Block)
-                .item_type(UIItemType::SidebarSettings)
-                .padding(BoxDimension {
-                    left: Dimension::Pixels(12.),
-                    right: Dimension::Pixels(12.),
-                    top: Dimension::Pixels(8.),
-                    bottom: Dimension::Pixels(8.),
-                })
-                .border(BoxDimension {
-                    left: Dimension::Pixels(0.),
-                    right: Dimension::Pixels(0.),
-                    top: Dimension::Pixels(1.),
-                    bottom: Dimension::Pixels(0.),
-                })
-                .colors(ElementColors {
-                    border: BorderColor {
-                        top: sidebar_separator(),
-                        bottom: LinearRgba::TRANSPARENT,
-                        left: LinearRgba::TRANSPARENT,
-                        right: LinearRgba::TRANSPARENT,
-                    },
-                    bg: InheritableColor::Inherited,
-                    text: sidebar_muted().into(),
-                })
-                .hover_colors(Some(ElementColors {
-                    border: BorderColor {
-                        top: sidebar_separator(),
-                        bottom: LinearRgba::TRANSPARENT,
-                        left: LinearRgba::TRANSPARENT,
-                        right: LinearRgba::TRANSPARENT,
-                    },
-                    bg: LinearRgba::with_srgba(255, 255, 255, 18).into(),
-                    text: sidebar_text().into(),
-                })),
-        );
 
         let root = Element::new(&font, ElementContent::Children(root_children))
             .display(DisplayType::Block)
@@ -897,7 +819,7 @@ mod test {
                     style: SidebarLineStyle::Meta,
                 },
                 SidebarLine {
-                    text: "◦ PR #704 open".to_string(),
+                    text: "\u{f407} PR #704 open".to_string(),
                     style: SidebarLineStyle::PullRequest(WorkspacePullRequestStatus::Open),
                 },
                 SidebarLine {
@@ -923,7 +845,7 @@ mod test {
                 number: 680,
                 status: WorkspacePullRequestStatus::Merged,
             }),
-            "✓ PR #680 merged".to_string()
+            "\u{f419} PR #680 merged".to_string()
         );
     }
 }

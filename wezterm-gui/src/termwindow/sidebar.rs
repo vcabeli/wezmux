@@ -20,9 +20,6 @@ use std::time::{Duration, Instant};
 
 const SIDEBAR_METADATA_COALESCE_DELAY: Duration = Duration::from_millis(200);
 const SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-/// Terminal preview refresh interval — 200ms (5fps) balances responsiveness
-/// with cost of scanning terminal buffers across all workspaces.
-const SIDEBAR_PREVIEW_REFRESH_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Default)]
 pub struct SidebarState {
@@ -34,10 +31,6 @@ pub struct SidebarState {
     metadata_targets: Vec<WorkspaceMetadataTarget>,
     pub metadata_refresh_in_flight: bool,
     pub next_metadata_refresh: Option<Instant>,
-    /// Cached terminal preview text per workspace.
-    terminal_previews: HashMap<String, Option<String>>,
-    /// Last time terminal previews were refreshed.
-    terminal_previews_updated: Option<Instant>,
     /// Cached sidebar entries from previous frame.
     cached_entries: Option<Vec<WorkspaceEntry>>,
     /// Workspace count at last cache build (invalidate on structural change).
@@ -46,6 +39,8 @@ pub struct SidebarState {
     cached_active_workspace: String,
     /// Hovered workspace at last cache build.
     cached_hovered_workspace: Option<String>,
+    /// Agent status store generation at last cache build.
+    cached_agent_status_generation: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -114,13 +109,16 @@ impl SidebarState {
             metadata_targets: vec![],
             metadata_refresh_in_flight: false,
             next_metadata_refresh: None,
-            terminal_previews: HashMap::new(),
-            terminal_previews_updated: None,
             cached_entries: None,
             cached_workspace_count: 0,
             cached_active_workspace: String::new(),
             cached_hovered_workspace: None,
+            cached_agent_status_generation: 0,
         }
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        self.cached_entries = None;
     }
 
     pub fn pixel_width(
@@ -168,7 +166,6 @@ pub struct WorkspaceEntry {
     pub listening_ports: Vec<u16>,
     pub pull_request: Option<WorkspacePullRequest>,
     pub latest_notification: Option<String>,
-    pub terminal_preview: Option<String>,
     pub unread_count: u32,
     pub tab_count: usize,
     pub pane_count: usize,
@@ -236,26 +233,6 @@ impl crate::TermWindow {
         let hovered = self.sidebar.hovered_workspace.clone();
         let workspace_count = mux.iter_workspaces().len();
 
-        // Refresh terminal preview cache on interval
-        let now = Instant::now();
-        let previews_stale = self
-            .sidebar
-            .terminal_previews_updated
-            .map(|t| now.duration_since(t) >= SIDEBAR_PREVIEW_REFRESH_INTERVAL)
-            .unwrap_or(true);
-        if previews_stale {
-            let workspaces = mux.iter_workspaces();
-            for name in &workspaces {
-                let preview = read_terminal_preview(&mux, name);
-                self.sidebar.terminal_previews.insert(name.clone(), preview);
-            }
-            // Remove stale entries for deleted workspaces
-            self.sidebar
-                .terminal_previews
-                .retain(|k, _| mux.iter_workspaces().contains(k));
-            self.sidebar.terminal_previews_updated = Some(now);
-        }
-
         // Fast path: reuse cached entries if nothing changed.
         // Check notification counts to detect mark-as-read events.
         let cached_unread_match = self
@@ -268,11 +245,28 @@ impl crate::TermWindow {
                 })
             })
             .unwrap_or(false);
+        let cached_metadata_match = self
+            .sidebar
+            .cached_entries
+            .as_ref()
+            .map(|entries| {
+                entries.iter().all(|e| {
+                    self.sidebar.metadata.get(&e.name).map_or(true, |m| {
+                        m.git_branch == e.git_branch
+                            && m.git_dirty == e.git_dirty
+                            && m.listening_ports == e.listening_ports
+                            && m.pull_request == e.pull_request
+                    })
+                })
+            })
+            .unwrap_or(true);
+        let agent_generation = mux.agent_status_generation();
         let structural_change = workspace_count != self.sidebar.cached_workspace_count
             || active_workspace != self.sidebar.cached_active_workspace
             || hovered != self.sidebar.cached_hovered_workspace
-            || previews_stale
-            || !cached_unread_match;
+            || !cached_unread_match
+            || !cached_metadata_match
+            || agent_generation != self.sidebar.cached_agent_status_generation;
         if !structural_change {
             if let Some(ref cached) = self.sidebar.cached_entries {
                 return cached.clone();
@@ -293,6 +287,7 @@ impl crate::TermWindow {
                 let mut pane_count = 0;
                 let mut process_ids = BTreeSet::new();
                 let mut active_pane_process_info: Option<LocalProcessInfo> = None;
+                let mut active_pane_id: Option<mux::pane::PaneId> = None;
 
                 for window_id in mux.iter_windows_in_workspace(&name) {
                     if let Some(window) = mux.get_window(window_id) {
@@ -302,13 +297,13 @@ impl crate::TermWindow {
                                 title = sidebar_title_from_tab(tab.as_ref())
                                     .unwrap_or_else(|| name.clone());
                                 if active_pane_process_info.is_none() {
-                                    active_pane_process_info = tab
-                                        .get_active_pane()
-                                        .and_then(|pane| {
+                                    if let Some(pane) = tab.get_active_pane() {
+                                        active_pane_id = Some(pane.pane_id());
+                                        active_pane_process_info =
                                             pane.get_foreground_process_info(
                                                 CachePolicy::AllowStale,
-                                            )
-                                        });
+                                            );
+                                    }
                                 }
                             }
                         }
@@ -362,16 +357,8 @@ impl crate::TermWindow {
                 let unread_count = mux.unread_notification_count_for_workspace(&name);
                 let agent = build_agent_info(
                     active_pane_process_info.as_ref(),
-                    latest_notification.as_deref(),
+                    active_pane_id,
                 );
-
-                // Use cached terminal preview (refreshed every 500ms, not every frame)
-                let terminal_preview = self
-                    .sidebar
-                    .terminal_previews
-                    .get(&name)
-                    .cloned()
-                    .flatten();
 
                 if let Some(cwd_path) = cwd_path.as_ref() {
                     refresh_targets.push(WorkspaceMetadataTarget {
@@ -393,7 +380,6 @@ impl crate::TermWindow {
                     listening_ports: metadata.listening_ports,
                     pull_request: metadata.pull_request,
                     latest_notification,
-                    terminal_preview,
                     unread_count,
                     tab_count,
                     pane_count,
@@ -435,6 +421,7 @@ impl crate::TermWindow {
         self.sidebar.cached_workspace_count = workspace_count;
         self.sidebar.cached_active_workspace = active_workspace;
         self.sidebar.cached_hovered_workspace = self.sidebar.hovered_workspace.clone();
+        self.sidebar.cached_agent_status_generation = agent_generation;
 
         entries
     }
@@ -602,146 +589,44 @@ fn agent_type_display_name(agent_type: AgentType) -> String {
     }
 }
 
-fn infer_agent_status(notification: Option<&str>) -> (AgentStatus, Option<String>) {
-    let Some(text) = notification else {
-        return (AgentStatus::Unknown, None);
-    };
-    let lower = text.to_lowercase();
-
-    if lower.contains("waiting for")
-        || lower.contains("needs input")
-        || lower.contains("permission")
-        || lower.contains("confirm")
-    {
-        return (AgentStatus::NeedsInput, Some(text.to_string()));
-    }
-    if lower.contains("idle")
-        || lower.contains("finished")
-        || lower.contains("done")
-        || lower.contains("completed")
-    {
-        return (AgentStatus::Idle, Some(text.to_string()));
-    }
-    if lower.contains("running")
-        || lower.contains("working")
-        || lower.contains("executing")
-    {
-        return (AgentStatus::Working, Some(text.to_string()));
-    }
-
-    (AgentStatus::Unknown, Some(text.to_string()))
-}
-
 fn build_agent_info(
     process_info: Option<&LocalProcessInfo>,
-    notification: Option<&str>,
+    pane_id: Option<mux::pane::PaneId>,
 ) -> Option<AgentInfo> {
-    let agent_type = process_info.and_then(detect_agent_type)?;
-    let (status, status_message) = infer_agent_status(notification);
+    let agent_type = process_info.and_then(detect_agent_type);
+
+    // Check the structured status store (populated via OSC 7777)
+    let pane_status = pane_id.and_then(|id| Mux::get().agent_status_for_pane(id));
+
+    // Need either process detection or store data to show agent info
+    if agent_type.is_none() && pane_status.is_none() {
+        return None;
+    }
+
+    let agent_type = agent_type.unwrap_or(AgentType::ClaudeCode);
+
+    let (status, status_message) = if let Some(pane_status) = pane_status {
+        let status = match pane_status.status {
+            mux::agent_status::AgentStatus::Working => AgentStatus::Working,
+            mux::agent_status::AgentStatus::Idle => AgentStatus::Idle,
+            mux::agent_status::AgentStatus::NeedsInput => AgentStatus::NeedsInput,
+        };
+        let msg = if pane_status.message.is_some() {
+            pane_status.message
+        } else {
+            pane_status.tool.map(|t| format!("Running {t}..."))
+        };
+        (status, msg)
+    } else {
+        (AgentStatus::Unknown, None)
+    };
+
     Some(AgentInfo {
         display_name: agent_type_display_name(agent_type),
         agent_type,
         status,
         status_message,
     })
-}
-
-/// Read the last non-empty line from the active pane's terminal buffer
-/// for a given workspace. Used to show terminal output preview on sidebar cards.
-fn read_terminal_preview(mux: &Mux, workspace_name: &str) -> Option<String> {
-    // Wrap in catch_unwind to prevent panics in pane access from crashing the render thread.
-    // Panes may be in a transitional state during workspace switches.
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        read_terminal_preview_inner(mux, workspace_name)
-    }))
-    .unwrap_or(None)
-}
-
-fn read_terminal_preview_inner(mux: &Mux, workspace_name: &str) -> Option<String> {
-    let window_ids = mux.iter_windows_in_workspace(workspace_name);
-    let window_id = window_ids.first()?;
-    let window = mux.get_window(*window_id)?;
-    let tab = window.get_active()?;
-    let pane = tab.get_active_pane()?;
-
-    let dims = pane.get_dimensions();
-    if dims.viewport_rows == 0 {
-        return None;
-    }
-
-    // Scan the full visible viewport to find meaningful content.
-    // Agent TUIs (Claude Code, etc.) put status bars at the bottom and
-    // content in the middle, so we need to scan the whole viewport.
-    let scan_lines = dims.viewport_rows;
-    let last_row = dims.physical_top + dims.viewport_rows as wezterm_term::StableRowIndex;
-    let first_row = last_row - scan_lines as wezterm_term::StableRowIndex;
-    let (_adjusted, lines) = pane.get_lines(first_row..last_row);
-
-    // Classify each line as meaningful or skip
-    let line_texts: Vec<Option<String>> = lines
-        .iter()
-        .map(|line| {
-            let text = line.as_str();
-            let trimmed = text.trim();
-            if trimmed.is_empty() || trimmed.len() < 3 {
-                return None;
-            }
-            if matches!(
-                trimmed,
-                ">" | "$" | "%" | ")" | "\u{276F}" | "\u{203A}" | "\u{2771}"
-            ) {
-                return None;
-            }
-            let meaningful_chars = trimmed
-                .chars()
-                .filter(|c| {
-                    !matches!(c,
-                    '\u{2500}'..='\u{259F}' |
-                    '—' | '–' | '_' | '=' | '-' | '~' | '·' | '•' | '…' |
-                    ' ' | '\t'
-                )
-                })
-                .count();
-            if meaningful_chars < 3 {
-                return None;
-            }
-            let lower = trimmed.to_lowercase();
-            if lower.contains("opus") || lower.contains("sonnet") || lower.contains("haiku") {
-                return None;
-            }
-            if lower.contains("bypass permissions") || lower.contains("auto-accept") {
-                return None;
-            }
-            if lower.contains("context)") && lower.contains("|") {
-                return None;
-            }
-            if lower.starts_with("\u{2731}") && lower.contains("brewed") {
-                return None;
-            }
-            let collapsed: String = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
-            if collapsed.is_empty() {
-                None
-            } else {
-                Some(collapsed)
-            }
-        })
-        .collect();
-
-    // Find the last meaningful line, then walk up to find the start of its block
-    let last_meaningful = line_texts.iter().rposition(|l| l.is_some())?;
-
-    // Walk upward from last_meaningful to find the block start:
-    // the block starts after the last None (empty/skip) line before it.
-    let mut block_start = last_meaningful;
-    for i in (0..last_meaningful).rev() {
-        if line_texts[i].is_none() {
-            break;
-        }
-        block_start = i;
-    }
-
-    // Return the first line of the block (the beginning of the response)
-    line_texts[block_start].clone()
 }
 
 fn sidebar_path(url: &Url) -> Option<PathBuf> {

@@ -67,6 +67,18 @@ SETTINGS_JSON=$(cat <<'ENDJSON'
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-needs-input.sh",
+            "timeout": 2
+          }
+        ]
+      }
     ]
   }
 }

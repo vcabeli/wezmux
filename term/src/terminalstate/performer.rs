@@ -740,7 +740,8 @@ impl<'a> Performer<'a> {
         // Log notification-related OSC commands for debugging
         match &osc {
             OperatingSystemCommand::SystemNotification(_)
-            | OperatingSystemCommand::RxvtExtension(_) => {
+            | OperatingSystemCommand::RxvtExtension(_)
+            | OperatingSystemCommand::WezmuxStatus { .. } => {
                 log::info!("osc_dispatch: {:?}", osc);
             }
             _ => {}
@@ -940,6 +941,12 @@ impl<'a> Performer<'a> {
                             focus: true,
                         });
                     }
+                }
+            }
+            OperatingSystemCommand::WezmuxStatus { event, data } => {
+                log::info!("WezmuxStatus: event={event:?} data={data:?}");
+                if let Some(handler) = self.alert_handler.as_mut() {
+                    handler.alert(Alert::WezmuxStatus { event, data });
                 }
             }
             OperatingSystemCommand::CurrentWorkingDirectory(url) => {

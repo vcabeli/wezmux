@@ -246,9 +246,7 @@ impl crate::TermWindow {
             .context("filled_rectangle for window background")?;
         }
 
-        if let Err(err) = self.paint_sidebar(&mut layers) {
-            log::error!("paint_sidebar failed: {:#}", err);
-        }
+        self.paint_sidebar(&mut layers).context("paint_sidebar")?;
 
         for pos in &panes {
             if pos.is_active {

@@ -71,6 +71,11 @@ pub enum Alert {
     OutputSinceFocusLost,
     /// A change to the progress bar state
     Progress(Progress),
+    /// Wezmux structured agent status (OSC 7777)
+    WezmuxStatus {
+        event: String,
+        data: Option<String>,
+    },
 }
 
 pub trait AlertHandler: Send + Sync {

@@ -170,16 +170,13 @@ impl super::TermWindow {
         };
 
         let border = self.get_os_border();
-        let configured_sidebar_width = crate::termwindow::sidebar::configured_pixel_width(
-            config,
-            DimensionContext {
-                dpi: dimensions.dpi as f32,
-                pixel_max: dimensions.pixel_width as f32,
-                pixel_cell: self.render_metrics.cell_size.width as f32,
-            },
-        );
         let sidebar_width = if self.sidebar.visible {
-            configured_sidebar_width
+            self.sidebar.pixel_width(
+                config,
+                dimensions.dpi as f32,
+                dimensions.pixel_width as f32,
+                self.render_metrics.cell_size.width as f32,
+            )
         } else {
             0
         };
@@ -524,7 +521,12 @@ impl super::TermWindow {
         let padding_top = config.window_padding.top.evaluate_as_pixels(v_context) as usize;
         let padding_bottom = config.window_padding.bottom.evaluate_as_pixels(v_context) as usize;
         let sidebar_width = if self.sidebar.visible {
-            crate::termwindow::sidebar::configured_pixel_width(&config, h_context)
+            self.sidebar.pixel_width(
+                &config,
+                self.dimensions.dpi as f32,
+                self.dimensions.pixel_width as f32,
+                render_metrics.cell_size.width as f32,
+            )
         } else {
             0
         };

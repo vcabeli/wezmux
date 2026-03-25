@@ -1230,6 +1230,7 @@ impl TermWindow {
                     alert: Alert::OutputSinceFocusLost | Alert::CurrentWorkingDirectoryChanged,
                     ..
                 } => {
+                    self.sidebar.invalidate_cache();
                     self.schedule_sidebar_metadata_refresh();
                     self.update_title();
                 }
@@ -1266,7 +1267,7 @@ impl TermWindow {
                     window.invalidate();
                 }
                 MuxNotification::Alert {
-                    alert: Alert::ToastNotification { .. },
+                    alert: Alert::ToastNotification { .. } | Alert::WezmuxStatus { .. },
                     ..
                 } => {
                     window.invalidate();
@@ -1490,7 +1491,8 @@ impl TermWindow {
                     | Alert::IconTitleChanged(_)
                     | Alert::Progress(_)
                     | Alert::SetUserVar { .. }
-                    | Alert::Bell,
+                    | Alert::Bell
+                    | Alert::WezmuxStatus { .. },
             }
             | MuxNotification::PaneFocused(pane_id)
             | MuxNotification::PaneRemoved(pane_id)

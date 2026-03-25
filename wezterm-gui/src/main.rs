@@ -1178,6 +1178,33 @@ fn run() -> anyhow::Result<()> {
         }
     }
 
+    // Mark this as a wezmux session so child processes (e.g. the claude
+    // wrapper) can detect they're running inside wezmux.
+    std::env::set_var("WEZMUX", "1");
+
+    // Prepend our bin/ directory to PATH so the claude wrapper shadows
+    // the real binary for all shells spawned inside wezmux.
+    if let Ok(exe) = std::env::current_exe() {
+        // Walk up from the executable to find a sibling bin/ directory.
+        // Works for both target/debug/wezterm-gui and app bundles.
+        let mut dir = exe.as_path().parent();
+        while let Some(d) = dir {
+            let bin_dir = d.join("bin");
+            if bin_dir.join("claude").exists() {
+                let path = std::env::var_os("PATH").unwrap_or_default();
+                let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
+                if !paths.contains(&bin_dir) {
+                    paths.insert(0, bin_dir);
+                    if let Ok(new_path) = std::env::join_paths(&paths) {
+                        std::env::set_var("PATH", &new_path);
+                    }
+                }
+                break;
+            }
+            dir = d.parent();
+        }
+    }
+
     let opts = Opt::parse();
 
     // This is a bit gross.

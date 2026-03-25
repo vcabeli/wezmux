@@ -50,6 +50,10 @@ pub enum OperatingSystemCommand {
     ResetColors(Vec<u8>),
     RxvtExtension(Vec<String>),
     ConEmuProgress(Progress),
+    WezmuxStatus {
+        event: String,
+        data: Option<String>,
+    },
 
     Unspecified(Vec<Vec<u8>>),
 }
@@ -378,6 +382,14 @@ impl OperatingSystemCommand {
                 }
                 Ok(OperatingSystemCommand::RxvtExtension(vec))
             }
+            WezmuxStatus => {
+                let event = osc
+                    .get(1)
+                    .map(|s| String::from_utf8_lossy(s).to_string())
+                    .unwrap_or_default();
+                let data = osc.get(2).map(|s| String::from_utf8_lossy(s).to_string());
+                Ok(OperatingSystemCommand::WezmuxStatus { event, data })
+            }
             FinalTermSemanticPrompt => self::FinalTermSemanticPrompt::parse(osc)
                 .map(OperatingSystemCommand::FinalTermSemanticPrompt),
             ChangeColorNumber => Self::parse_change_color_number(osc),
@@ -514,6 +526,7 @@ osc_entries!(
     ResetTektronixCursorColor = "118",
     ResetHighlightForegroundColor = "119",
     RxvtProprietary = "777",
+    WezmuxStatus = "7777",
     FinalTermSemanticPrompt = "133",
     ITermProprietary = "1337",
     /// Here the "Sun" suffix comes from the table in
@@ -629,6 +642,12 @@ impl Display for OperatingSystemCommand {
             ConEmuProgress(Progress::SetError(pct)) => write!(f, "9;4;2;{pct}")?,
             ConEmuProgress(Progress::SetIndeterminate) => write!(f, "9;4;3")?,
             ConEmuProgress(Progress::Paused) => write!(f, "9;4;4")?,
+            WezmuxStatus { event, data } => {
+                write!(f, "7777;{}", event)?;
+                if let Some(d) = data {
+                    write!(f, ";{}", d)?;
+                }
+            }
         };
         // Use the longer form ST as neovim doesn't like the BEL version
         write!(f, "\x1b\\")?;
