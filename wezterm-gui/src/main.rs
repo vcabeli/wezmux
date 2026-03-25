@@ -1191,6 +1191,10 @@ fn run() -> anyhow::Result<()> {
         while let Some(d) = dir {
             let bin_dir = d.join("bin");
             if bin_dir.join("claude").exists() {
+                // Store the bin dir so shell init scripts can re-prepend it
+                // after macOS path_helper reorders PATH.
+                std::env::set_var("WEZMUX_BIN", &bin_dir);
+
                 let path = std::env::var_os("PATH").unwrap_or_default();
                 let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
                 if !paths.contains(&bin_dir) {

@@ -11,6 +11,63 @@ pub fn set_wezterm_executable() {
     }
 }
 
+/// When launched as a macOS .app bundle, the process inherits a minimal PATH
+/// (typically just /usr/bin:/bin:/usr/sbin:/sbin). This function resolves the
+/// user's real PATH by running their login shell, then merges any missing
+/// directories into the current process PATH. This ensures tools like `gh`
+/// (installed via Homebrew to /opt/homebrew/bin) are discoverable.
+#[cfg(target_os = "macos")]
+pub fn fixup_macos_app_path() {
+    use std::process::Command;
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+
+    // If PATH already looks rich (e.g. cargo run inherits the terminal env),
+    // skip the shell probe to avoid slowing down startup.
+    if current_path.contains("/opt/homebrew") || current_path.contains(".cargo/bin") {
+        return;
+    }
+
+    // Resolve the user's default shell from the password database
+    let shell = {
+        let pw = unsafe { libc::getpwuid(libc::getuid()) };
+        if pw.is_null() {
+            "/bin/zsh".to_string()
+        } else {
+            let shell_cstr = unsafe { std::ffi::CStr::from_ptr((*pw).pw_shell) };
+            shell_cstr.to_string_lossy().into_owned()
+        }
+    };
+
+    // Run a login shell to extract the fully resolved PATH
+    if let Ok(output) = Command::new(&shell)
+        .args(["-l", "-c", "printf '%s' \"$PATH\""])
+        .output()
+    {
+        if output.status.success() {
+            let shell_path = String::from_utf8_lossy(&output.stdout);
+            let current_dirs: std::collections::HashSet<&str> =
+                current_path.split(':').collect();
+            let mut paths: Vec<&str> = current_path.split(':').collect();
+
+            // Append any directories from the login shell that we're missing
+            for dir in shell_path.split(':') {
+                if !dir.is_empty() && !current_dirs.contains(dir) {
+                    paths.push(dir);
+                }
+            }
+
+            let new_path = paths.join(":");
+            std::env::set_var("PATH", &new_path);
+            log::debug!(
+                "fixup_macos_app_path: merged login shell PATH ({} -> {} entries)",
+                current_path.split(':').count(),
+                paths.len()
+            );
+        }
+    }
+}
+
 pub fn fixup_snap() {
     if std::env::var_os("SNAP").is_some() {
         // snapd sets a bunch of environment variables as a part of setup
@@ -218,6 +275,8 @@ pub fn bootstrap() {
 
     #[cfg(target_os = "macos")]
     set_lang_from_locale();
+    #[cfg(target_os = "macos")]
+    fixup_macos_app_path();
 
     fixup_appimage();
     fixup_snap();

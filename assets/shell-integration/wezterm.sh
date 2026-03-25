@@ -562,6 +562,23 @@ if [[ -z "${WEZTERM_SHELL_SKIP_USER_VARS-}" ]]; then
   fi
 fi
 
+# When running inside wezmux, prepend the wezmux bin/ directory to PATH
+# so the claude wrapper shadows the real binary.  The login shell's
+# /etc/zprofile (path_helper) may have reset PATH after the parent
+# process set it, so we re-apply here where we know the shell is interactive.
+if [[ -n "${WEZMUX-}" && -n "${WEZTERM_EXECUTABLE-}" ]]; then
+  __wezmux_bin_dir="$(dirname "$WEZTERM_EXECUTABLE")/../bin"
+  if [[ -d "$__wezmux_bin_dir" && ":$PATH:" != *":$__wezmux_bin_dir:"* ]]; then
+    export PATH="$__wezmux_bin_dir:$PATH"
+  fi
+  # Also try the repo-layout path (target/debug/.. -> bin/)
+  __wezmux_repo_bin="$(cd "$(dirname "$WEZTERM_EXECUTABLE")" 2>/dev/null && while [[ "$PWD" != "/" ]]; do if [[ -x "$PWD/bin/claude" ]]; then echo "$PWD/bin"; break; fi; cd ..; done)"
+  if [[ -n "$__wezmux_repo_bin" && ":$PATH:" != *":$__wezmux_repo_bin:"* ]]; then
+    export PATH="$__wezmux_repo_bin:$PATH"
+  fi
+  unset __wezmux_bin_dir __wezmux_repo_bin
+fi
+
 if [[ -z "${WEZTERM_SHELL_SKIP_CWD-}" ]] ; then
   if [[ -n "${BLE_VERSION-}" ]]; then
     blehook PRECMD+=__wezterm_osc7

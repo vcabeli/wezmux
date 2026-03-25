@@ -483,6 +483,28 @@ impl LocalDomain {
         if let Some(agent) = Mux::get().agent.as_ref() {
             cmd.env("SSH_AUTH_SOCK", agent.path());
         }
+
+        // On macOS, when WEZMUX_BIN is set, inject a ZDOTDIR wrapper so that
+        // the wezmux bin/ directory is prepended to PATH after zsh's login
+        // init (which runs path_helper and reorders PATH).
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("WEZMUX_BIN").is_some() {
+            if let Ok(zdotdir) = crate::wezmux_zdotdir::ensure_zdotdir() {
+                // Only set ZDOTDIR for default shell (not explicit commands)
+                if cmd.is_default_prog() || {
+                    let argv = cmd.get_argv();
+                    argv.len() <= 2
+                        && argv
+                            .first()
+                            .and_then(|a| a.to_str())
+                            .map(|s| s.contains("zsh"))
+                            .unwrap_or(false)
+                } {
+                    cmd.env("ZDOTDIR", zdotdir);
+                }
+            }
+        }
+
         self.fixup_command(&mut cmd).await?;
         Ok(cmd)
     }
