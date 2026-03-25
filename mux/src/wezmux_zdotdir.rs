@@ -35,9 +35,11 @@ pub fn ensure_zdotdir() -> anyhow::Result<PathBuf> {
 fn write_zshenv(dir: &Path, original_zdotdir: &str) -> anyhow::Result<()> {
     // Store the real ZDOTDIR but do NOT reset ZDOTDIR yet — we need zsh
     // to keep reading from our wrapper directory for .zprofile/.zshrc/.zlogin.
+    // Explicitly set HISTFILE so zsh doesn't default it to the wrapper dir.
     let content = format!(
         r#"# Wezmux ZDOTDIR wrapper
 export _WEZMUX_REAL_ZDOTDIR="{original_zdotdir}"
+export HISTFILE="${{HISTFILE:-$_WEZMUX_REAL_ZDOTDIR/.zsh_history}}"
 if [[ -f "$_WEZMUX_REAL_ZDOTDIR/.zshenv" ]]; then
   ZDOTDIR="$_WEZMUX_REAL_ZDOTDIR" source "$_WEZMUX_REAL_ZDOTDIR/.zshenv"
 fi
@@ -65,6 +67,10 @@ fi
 
 # Restore ZDOTDIR now that all init files have been sourced
 export ZDOTDIR="$_WEZMUX_REAL_ZDOTDIR"
+
+# Fix HISTFILE — zsh defaults it relative to ZDOTDIR at startup,
+# which pointed at our wrapper dir. Reset it to the real location.
+export HISTFILE="$ZDOTDIR/.zsh_history"
 
 # Re-prepend WEZMUX_BIN to PATH after path_helper has reordered it
 if [[ -n "${WEZMUX_BIN:-}" && -d "$WEZMUX_BIN" ]]; then
