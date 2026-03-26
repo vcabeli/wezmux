@@ -5,7 +5,7 @@ milestone_name: milestone
 status: planning
 stopped_at: Phase 1 context gathered
 last_updated: "2026-03-24T14:44:07.167Z"
-last_activity: 2026-03-24 — Roadmap created
+last_activity: 2026-03-26 — Completed quick task 260326-gtt: Make Wezmux easily installable by others
 progress:
   total_phases: 6
   completed_phases: 0
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 Phase: 1 of 6 (Fork Setup)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-03-24 — Roadmap created
+Last activity: 2026-03-26 — Completed quick task 260326-gtt: Make Wezmux easily installable by others
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -74,6 +74,12 @@ None yet.
 - Phase 4: Port detection via `lsof` is slow (~200ms); needs scoped approach using pane process group PID
 - Phase 5: OSC 99 (kitty) may require a new termwiz enum variant — requires source verification before implementing
 - Phase 5: OSC 9 crashes unsigned macOS dev builds (UNUserNotificationCenter); in-process store is primary path, document `codesign --force --deep -s -` workaround
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260326-gtt | Make Wezmux easily installable by others | 2026-03-26 | 7b5be49 | [260326-gtt-make-wezmux-easily-installable-by-others](./quick/260326-gtt-make-wezmux-easily-installable-by-others/) |
 
 ## Session Continuity
 
