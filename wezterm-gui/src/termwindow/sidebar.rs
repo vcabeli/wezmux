@@ -651,12 +651,14 @@ fn build_agent_info(
     // Check the structured status store (populated via OSC 7777)
     let pane_status = pane_id.and_then(|id| Mux::get().agent_status_for_pane(id));
 
-    // Need either process detection or store data to show agent info
-    if agent_type.is_none() && pane_status.is_none() {
+    // No agent process detected — don't show agent info.
+    // Keep store data intact so it's available if the agent resumes
+    // (e.g., after a subprocess like `cargo build` finishes).
+    if agent_type.is_none() {
         return None;
     }
 
-    let agent_type = agent_type.unwrap_or(AgentType::ClaudeCode);
+    let agent_type = agent_type.unwrap();
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -671,6 +673,8 @@ fn build_agent_info(
         };
         (status, msg)
     } else {
+        // Agent detected as foreground process but no OSC 7777 data —
+        // we can't tell if it's working or idle, so use Unknown (no label shown).
         (AgentStatus::Unknown, None)
     };
 

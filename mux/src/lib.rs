@@ -882,6 +882,10 @@ impl Mux {
         self.agent_status_store.lock().get(pane_id).cloned()
     }
 
+    pub fn remove_agent_status(&self, pane_id: PaneId) {
+        self.agent_status_store.lock().remove(pane_id);
+    }
+
     pub fn agent_status_generation(&self) -> u64 {
         self.agent_status_store.lock().generation()
     }

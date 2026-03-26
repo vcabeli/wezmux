@@ -1,8 +1,6 @@
 use crate::pane::PaneId;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-const EXPIRY: Duration = Duration::from_secs(600); // 10 min
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentStatus {
@@ -65,14 +63,23 @@ impl AgentStatusStore {
     }
 
     pub fn clear(&mut self, pane_id: PaneId) {
+        // Don't remove — preserve last known message/status so the sidebar
+        // keeps showing agent info as long as the process is alive.
+        // Only reset status to Idle; keep message and tool for context.
+        if let Some(entry) = self.statuses.get_mut(&pane_id) {
+            entry.status = AgentStatus::Idle;
+            entry.updated = Instant::now();
+        }
+        self.generation += 1;
+    }
+
+    pub fn remove(&mut self, pane_id: PaneId) {
         self.statuses.remove(&pane_id);
         self.generation += 1;
     }
 
     pub fn get(&self, pane_id: PaneId) -> Option<&AgentPaneStatus> {
-        self.statuses
-            .get(&pane_id)
-            .filter(|s| s.updated.elapsed() < EXPIRY)
+        self.statuses.get(&pane_id)
     }
 
     pub fn generation(&self) -> u64 {
@@ -120,10 +127,22 @@ mod test {
     }
 
     #[test]
-    fn clear_removes_entry() {
+    fn clear_resets_to_idle() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
+        store.update_tool(1, "Bash".to_string());
         store.clear(1);
+        let status = store.get(1).unwrap();
+        assert_eq!(status.status, AgentStatus::Idle);
+        // Tool context is preserved for sidebar display
+        assert_eq!(status.tool.as_deref(), Some("Bash"));
+    }
+
+    #[test]
+    fn remove_deletes_entry() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.remove(1);
         assert!(store.get(1).is_none());
     }
 

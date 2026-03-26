@@ -94,12 +94,10 @@ fn sidebar_pull_request_closed() -> LinearRgba {
 fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarLine> {
     let mut lines = vec![];
 
-    // Agent status with message, falling back to notification text
+    // Agent status with structured message only (no notification fallback —
+    // toast notifications can contain debug/log text that isn't user-facing).
     if let Some(ref agent) = entry.agent {
-        let text = agent
-            .status_message
-            .as_deref()
-            .or(entry.latest_notification.as_deref());
+        let text = agent.status_message.as_deref();
         if let Some(text) = text {
             for line in wrap_text_to_cells(text, cols, 4) {
                 lines.push(SidebarLine {
