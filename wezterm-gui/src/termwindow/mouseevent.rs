@@ -536,20 +536,8 @@ impl super::TermWindow {
         if matches!(event.kind, WMEK::Press(MousePress::Left)) {
             front_end().switch_workspace(&workspace);
 
-            // Mark all panes in this workspace as read — handles the single-pane
-            // case where switching to the already-active workspace wouldn't fire
-            // PaneFocused.
             let mux = Mux::get();
-            for window_id in mux.iter_windows_in_workspace(&workspace) {
-                if let Some(window) = mux.get_window(window_id) {
-                    if let Some(tab) = window.get_active() {
-                        if let Some(pane) = tab.get_active_pane() {
-                            mux.mark_pane_notifications_read(pane.pane_id());
-                            mux.record_focus_for_current_identity(pane.pane_id());
-                        }
-                    }
-                }
-            }
+            mux.mark_workspace_notifications_read(&workspace);
 
             // Force sidebar cache rebuild so badge clears immediately
             self.sidebar.invalidate_cache();

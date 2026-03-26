@@ -38,8 +38,6 @@ impl AgentStatusStore {
             });
         entry.status = status;
         entry.updated = Instant::now();
-        // Clear tool on status transitions (new lifecycle phase)
-        entry.tool = None;
         self.generation += 1;
     }
 
@@ -110,7 +108,7 @@ mod test {
     }
 
     #[test]
-    fn status_transition_clears_tool() {
+    fn status_transition_preserves_tool() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
         store.update_tool(1, "Bash".to_string());
@@ -118,7 +116,7 @@ mod test {
 
         let status = store.get(1).unwrap();
         assert_eq!(status.status, AgentStatus::Idle);
-        assert!(status.tool.is_none());
+        assert_eq!(status.tool.as_deref(), Some("Bash"));
     }
 
     #[test]

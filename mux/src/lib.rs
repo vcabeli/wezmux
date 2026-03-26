@@ -840,6 +840,19 @@ impl Mux {
         self.notification_store.lock().mark_pane_read(pane_id);
     }
 
+    /// Mark notifications read for the active pane in each window of a workspace.
+    pub fn mark_workspace_notifications_read(&self, workspace: &str) {
+        for window_id in self.iter_windows_in_workspace(workspace) {
+            if let Some(window) = self.get_window(window_id) {
+                if let Some(tab) = window.get_active() {
+                    if let Some(pane) = tab.get_active_pane() {
+                        self.mark_pane_notifications_read(pane.pane_id());
+                    }
+                }
+            }
+        }
+    }
+
     pub fn pane_has_unread_notifications(&self, pane_id: PaneId) -> bool {
         self.notification_store.lock().has_unread(pane_id)
     }

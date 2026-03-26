@@ -3062,6 +3062,7 @@ impl TermWindow {
                 let mux = Mux::get();
                 let workspaces = mux.iter_workspaces();
                 if let Some(w) = workspaces.get(*index) {
+                    mux.mark_workspace_notifications_read(w);
                     front_end().switch_workspace(w);
                 }
             }
