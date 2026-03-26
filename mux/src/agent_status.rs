@@ -39,6 +39,19 @@ impl AgentStatusStore {
                 last_working_message: None,
                 updated: Instant::now(),
             });
+        // When leaving Working, snapshot the current message as the
+        // last working output so the sidebar shows it while idle.
+        if matches!(entry.status, AgentStatus::Working) && !matches!(status, AgentStatus::Working) {
+            if let Some(ref msg) = entry.message {
+                entry.last_working_message = Some(msg.clone());
+            }
+        }
+        // When entering Working, clear message context so stale
+        // previews from a previous working session don't persist.
+        if matches!(status, AgentStatus::Working) && !matches!(entry.status, AgentStatus::Working) {
+            entry.message = None;
+            entry.last_working_message = None;
+        }
         entry.status = status;
         entry.updated = Instant::now();
         self.generation += 1;
@@ -55,12 +68,6 @@ impl AgentStatusStore {
                 last_working_message: None,
                 updated: Instant::now(),
             });
-        // Preserve the previous message as last_working_message.
-        // This way, when a generic "waiting for input" message replaces
-        // a useful output, the useful output is still available.
-        if let Some(ref prev) = entry.message {
-            entry.last_working_message = Some(prev.clone());
-        }
         entry.message = Some(message);
         entry.updated = Instant::now();
         self.generation += 1;
@@ -170,33 +177,75 @@ mod test {
     }
 
     #[test]
-    fn last_working_message_persists_across_status_transition() {
+    fn last_working_message_snapshots_on_idle_transition() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
         store.update_message(1, "Refactoring auth module".to_string());
+        store.update_message(1, "Done refactoring".to_string());
 
-        // Transition to idle, then a useful final output arrives, then generic message
+        // Transition to idle snapshots the current message
         store.update_status(1, AgentStatus::Idle);
-        store.update_message(1, "**Still stuck.** Old process hung".to_string());
-        store.update_message(1, "Claude is waiting for your input".to_string());
 
         let status = store.get(1).unwrap();
         assert_eq!(status.status, AgentStatus::Idle);
-        // Current message is the generic one
-        assert_eq!(status.message.as_deref(), Some("Claude is waiting for your input"));
-        // last_working_message preserves the useful output (previous message)
-        assert_eq!(status.last_working_message.as_deref(), Some("**Still stuck.** Old process hung"));
+        // last_working_message is the message at the moment of transition
+        assert_eq!(
+            status.last_working_message.as_deref(),
+            Some("Done refactoring")
+        );
+        // message is also still set
+        assert_eq!(status.message.as_deref(), Some("Done refactoring"));
     }
 
     #[test]
-    fn last_working_message_tracks_previous() {
+    fn post_idle_message_does_not_overwrite_last_working_message() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "Useful output".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        // Generic "waiting" message arrives after idle
+        store.update_message(1, "Claude is waiting for your input".to_string());
+
+        let status = store.get(1).unwrap();
+        // Current message is the generic one
+        assert_eq!(
+            status.message.as_deref(),
+            Some("Claude is waiting for your input")
+        );
+        // last_working_message preserves the useful output from Working
+        assert_eq!(
+            status.last_working_message.as_deref(),
+            Some("Useful output")
+        );
+    }
+
+    #[test]
+    fn working_transition_clears_stale_messages() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "old output".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        // Start a new working session
+        store.update_status(1, AgentStatus::Working);
+
+        let status = store.get(1).unwrap();
+        // Both cleared so stale previews don't persist
+        assert!(status.message.is_none());
+        assert!(status.last_working_message.is_none());
+    }
+
+    #[test]
+    fn messages_during_working_not_saved_to_lwm() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
         store.update_message(1, "first output".to_string());
         store.update_message(1, "second output".to_string());
 
         let status = store.get(1).unwrap();
-        // last_working_message is the previous message
-        assert_eq!(status.last_working_message.as_deref(), Some("first output"));
+        // During working, update_message only sets message, not lwm
+        assert_eq!(status.message.as_deref(), Some("second output"));
+        assert!(status.last_working_message.is_none());
     }
 }
