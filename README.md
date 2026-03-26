@@ -37,6 +37,7 @@ A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace mana
 |----------|--------|
 | `Cmd+B` | Toggle sidebar |
 | `Option+U` | Jump to last unread notification |
+| `Option+1..9` | Switch to workspace by index |
 
 ## Install
 
