@@ -1,4 +1,6 @@
-.PHONY: all fmt build check test docs servedocs
+APP_DIR ?= /Applications/Wezmux.app
+
+.PHONY: all fmt build check test docs servedocs install bundle
 
 all: build
 
@@ -27,3 +29,29 @@ docs:
 
 servedocs:
 	ci/build-docs.sh serve
+
+install:
+	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+	mkdir -p $(APP_DIR)/Contents/MacOS
+	cp target/release/wezterm-gui $(APP_DIR)/Contents/MacOS/wezterm-gui
+	cp target/release/wezterm $(APP_DIR)/Contents/MacOS/wezterm
+	cp target/release/wezterm-mux-server $(APP_DIR)/Contents/MacOS/wezterm-mux-server
+	cp target/release/strip-ansi-escapes $(APP_DIR)/Contents/MacOS/strip-ansi-escapes
+	cp assets/macos/WezTerm.app/Contents/Info.plist $(APP_DIR)/Contents/Info.plist
+	mkdir -p $(APP_DIR)/Contents/Resources
+	cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns $(APP_DIR)/Contents/Resources/terminal.icns
+	codesign --force --sign - $(APP_DIR)/Contents/MacOS/wezterm-gui
+	@echo "Wezmux.app installed to $(APP_DIR)"
+
+bundle:
+	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+	mkdir -p target/Wezmux.app/Contents/MacOS
+	cp target/release/wezterm-gui target/Wezmux.app/Contents/MacOS/wezterm-gui
+	cp target/release/wezterm target/Wezmux.app/Contents/MacOS/wezterm
+	cp target/release/wezterm-mux-server target/Wezmux.app/Contents/MacOS/wezterm-mux-server
+	cp target/release/strip-ansi-escapes target/Wezmux.app/Contents/MacOS/strip-ansi-escapes
+	cp assets/macos/WezTerm.app/Contents/Info.plist target/Wezmux.app/Contents/Info.plist
+	mkdir -p target/Wezmux.app/Contents/Resources
+	cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns target/Wezmux.app/Contents/Resources/terminal.icns
+	codesign --force --sign - target/Wezmux.app/Contents/MacOS/wezterm-gui
+	@echo "Wezmux.app bundle ready at target/Wezmux.app"
