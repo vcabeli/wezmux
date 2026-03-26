@@ -30,6 +30,14 @@ impl NotificationStore {
         body: String,
         unread: bool,
     ) {
+        // Deduplicate: if the most recent notification for this pane has the
+        // same title and body, skip adding a duplicate.
+        if let Some(latest) = self.notifications.iter().find(|n| n.pane_id == pane_id) {
+            if latest.title == title && latest.body == body {
+                return;
+            }
+        }
+
         let notification = Notification {
             pane_id,
             workspace: workspace.clone(),

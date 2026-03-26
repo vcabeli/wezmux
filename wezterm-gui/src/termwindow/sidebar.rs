@@ -1,6 +1,6 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::pane::CachePolicy;
+use mux::pane::{CachePolicy, PaneId};
 use mux::Mux;
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
@@ -41,6 +41,8 @@ pub struct SidebarState {
     cached_hovered_workspace: Option<String>,
     /// Agent status store generation at last cache build.
     cached_agent_status_generation: u64,
+    /// Last detected agent type per pane — survives transient process detection failures.
+    pub last_known_agents: HashMap<PaneId, AgentType>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -148,6 +150,7 @@ impl SidebarState {
             cached_active_workspace: String::new(),
             cached_hovered_workspace: None,
             cached_agent_status_generation: 0,
+            last_known_agents: HashMap::new(),
         }
     }
 
@@ -392,7 +395,16 @@ impl crate::TermWindow {
                 let agent = build_agent_info(
                     active_pane_process_info.as_ref(),
                     active_pane_id,
+                    active_pane_id.and_then(|id| self.sidebar.last_known_agents.get(&id).copied()),
                 );
+
+                // Cache detected agent type so transient process detection
+                // failures don't wipe the preview on the next render frame.
+                if let Some(pane_id) = active_pane_id {
+                    if let Some(ref agent) = agent {
+                        self.sidebar.last_known_agents.insert(pane_id, agent.agent_type);
+                    }
+                }
 
                 if let Some(cwd_path) = cwd_path.as_ref() {
                     refresh_targets.push(WorkspaceMetadataTarget {
@@ -645,20 +657,25 @@ fn agent_type_display_name(agent_type: AgentType) -> String {
 fn build_agent_info(
     process_info: Option<&LocalProcessInfo>,
     pane_id: Option<mux::pane::PaneId>,
+    cached_agent_type: Option<AgentType>,
 ) -> Option<AgentInfo> {
-    let agent_type = process_info.and_then(detect_agent_type);
+    let detected_type = process_info.and_then(detect_agent_type);
 
     // Check the structured status store (populated via OSC 7777)
     let pane_status = pane_id.and_then(|id| Mux::get().agent_status_for_pane(id));
 
-    // No agent process detected — don't show agent info.
-    // Keep store data intact so it's available if the agent resumes
-    // (e.g., after a subprocess like `cargo build` finishes).
-    if agent_type.is_none() {
-        return None;
-    }
+    // Resolve agent type: prefer live detection, then cached type, then
+    // default to ClaudeCode when OSC 7777 data exists (so the preview still
+    // shows even on first transient process detection failure).
+    let agent_type = detected_type.or(cached_agent_type).or_else(|| {
+        if pane_status.is_some() {
+            Some(AgentType::ClaudeCode)
+        } else {
+            None
+        }
+    });
 
-    let agent_type = agent_type.unwrap();
+    let agent_type = agent_type?;
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -666,10 +683,26 @@ fn build_agent_info(
             mux::agent_status::AgentStatus::Idle => AgentStatus::Idle,
             mux::agent_status::AgentStatus::NeedsInput => AgentStatus::NeedsInput,
         };
-        let msg = if pane_status.message.is_some() {
-            pane_status.message
-        } else {
-            pane_status.tool.map(|t| format!("Running {t}..."))
+        // When the agent is idle/needs_input, prefer the last working message
+        // (the actual output preview) over the current message (which is often
+        // a generic status like "Claude is waiting for your input").
+        let msg = match status {
+            AgentStatus::Working => {
+                if pane_status.message.is_some() {
+                    pane_status.message
+                } else {
+                    pane_status.tool.map(|t| format!("Running {t}..."))
+                }
+            }
+            _ => {
+                if pane_status.last_working_message.is_some() {
+                    pane_status.last_working_message
+                } else if pane_status.message.is_some() {
+                    pane_status.message
+                } else {
+                    pane_status.tool.map(|t| format!("Running {t}..."))
+                }
+            }
         };
         (status, msg)
     } else {
