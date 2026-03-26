@@ -1,40 +1,68 @@
-# Wez's Terminal
+# Wezmux
 
-<img height="128" alt="WezTerm Icon" src="https://raw.githubusercontent.com/wezterm/wezterm/main/assets/icon/wezterm-icon.svg" align="left"> *A GPU-accelerated cross-platform terminal emulator and multiplexer written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
+A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Built as a personal tool for running multiple AI coding agents side-by-side and knowing at a glance which workspace needs attention.
 
-User facing docs and guide at: https://wezterm.org/
+## What's different from WezTerm
 
-![Screenshot](docs/screenshots/two.png)
+**Persistent sidebar** showing per-workspace metadata:
+- Git branch and dirty status
+- PR number and status (via `gh` CLI)
+- Listening ports
+- Agent status line (via OSC 7777)
+- Unread notification badges
 
-*Screenshot of wezterm on macOS, running vim*
+**Notification system** with visual indicators:
+- Blue ring on panes with unread notifications
+- Badge counts in the sidebar
+- Toast-style notifications via OSC 9 / OSC 777
 
-## Installation
+**OSC 7777 agent status protocol** for structured status reporting:
+```
+\e]7777;status;working;Running tests\a
+```
 
-https://wezterm.org/installation
+**Session save/restore** on quit and relaunch:
+- Workspace layout and split pane structure preserved
+- Per-pane CWDs restored
+- Scrollback history with ANSI colors
+- Sidebar metadata cache (no blank-state flash on relaunch)
 
-## Getting help
+**Workspace management:**
+- Deterministic workspace naming
+- "New workspace" button pinned to sidebar bottom
+- Click sidebar entries to switch workspaces
 
-This is a spare time project, so please bear with me.  There are a couple of channels for support:
+## Install
 
-* You can use the [GitHub issue tracker](https://github.com/wezterm/wezterm/issues) to see if someone else has a similar issue, or to file a new one.
-* Start or join a thread in our [GitHub Discussions](https://github.com/wezterm/wezterm/discussions); if you have general
-  questions or want to chat with other wezterm users, you're welcome here!
-* There is a [Matrix room via Element.io](https://app.element.io/#/room/#wezterm:matrix.org)
-  for (potentially!) real time discussions.
+Build from source (macOS):
 
-The GitHub Discussions and Element/Gitter rooms are better suited for questions
-than bug reports, but don't be afraid to use whichever you are most comfortable
-using and we'll work it out.
+```bash
+cargo build --release --package wezterm-gui
+```
 
-## Supporting the Project
+Sign and install into an app bundle:
 
-If you use and like WezTerm, please consider sponsoring it: your support helps
-to cover the fees required to maintain the project and to validate the time
-spent working on it!
+```bash
+# Sign the binary (never use --deep on the bundle)
+cp target/release/wezterm-gui /tmp/wezterm-gui
+codesign --force --sign - /tmp/wezterm-gui
 
-[Read more about sponsoring](https://wezterm.org/sponsor.html).
+# Copy into your app bundle
+cp /tmp/wezterm-gui /Applications/Wezmux.app/Contents/MacOS/wezterm-gui
+```
 
-* [![Sponsor WezTerm](https://img.shields.io/github/sponsors/wez?label=Sponsor%20WezTerm&logo=github&style=for-the-badge)](https://github.com/sponsors/wez)
-* [Patreon](https://patreon.com/WezFurlong)
-* [Ko-Fi](https://ko-fi.com/wezfurlong)
-* [Liberapay](https://liberapay.com/wez)
+You can duplicate `WezTerm.app` to create `Wezmux.app` as the bundle structure is identical.
+
+## Config
+
+Wezmux shares `~/.wezterm.lua` with WezTerm. Guard Wezmux-specific fields so stock WezTerm doesn't error:
+
+```lua
+pcall(function()
+  config.sidebar = { width = '400px' }
+end)
+```
+
+## Credits
+
+Built on top of [WezTerm](https://github.com/wezterm/wezterm) by [@wez](https://github.com/wez). All the heavy lifting (GPU renderer, terminal emulation, multiplexer) is WezTerm's.
