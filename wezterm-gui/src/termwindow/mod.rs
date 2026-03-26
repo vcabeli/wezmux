@@ -1365,6 +1365,10 @@ impl TermWindow {
                 self.mux_window_id = mux_window_id;
                 *self.mux_window_id_for_subscriptions.lock().unwrap() = mux_window_id;
 
+                // Re-subscribe to mux notifications for the new window.
+                // The old subscription was killed by WindowRemoved.
+                self.subscribe_to_pane_updates();
+
                 self.clear_all_overlays();
                 self.current_highlight.take();
                 self.invalidate_fancy_tab_bar();
