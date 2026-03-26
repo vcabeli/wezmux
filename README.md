@@ -8,6 +8,10 @@ A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace mana
 
 ![Wezmux screenshot](assets/screenshot.png)
 
+## Why ?
+
+Because cmux was disappointing and I mean WezTerm is just the dream
+
 ## What's different from WezTerm
 
 **Persistent sidebar** showing per-workspace metadata:
