@@ -32,6 +32,12 @@ A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace mana
 - "New workspace" button pinned to sidebar bottom
 - Click sidebar entries to switch workspaces
 
+**Keyboard shortcuts:**
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+B` | Toggle sidebar |
+| `Option+U` | Jump to last unread notification |
+
 ## Install
 
 Build from source (macOS):
