@@ -43,24 +43,54 @@ A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace mana
 
 ## Install
 
-Build from source (macOS):
+### Prerequisites
+
+- **Rust toolchain** — installed automatically via `rust-toolchain.toml` once rustup is present. To install rustup:
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+- **Xcode Command Line Tools** — needed for C dependencies (harfbuzz, freetype, libpng, zlib):
+  ```bash
+  xcode-select --install
+  ```
+- **`gh` CLI** (optional) — enables PR status in the sidebar:
+  ```bash
+  brew install gh
+  ```
+
+### Clone
 
 ```bash
-cargo build --release --package wezterm-gui
+git clone --recursive https://github.com/vcabeli/wezmux.git
+cd wezmux
 ```
 
-Sign and install into an app bundle:
+If you already cloned without `--recursive`, run:
+```bash
+git submodule update --init --recursive
+```
+
+### Build and install
 
 ```bash
-# Sign the binary (never use --deep on the bundle)
-cp target/release/wezterm-gui /tmp/wezterm-gui
-codesign --force --sign - /tmp/wezterm-gui
-
-# Copy into your app bundle
-cp /tmp/wezterm-gui /Applications/Wezmux.app/Contents/MacOS/wezterm-gui
+make install
 ```
 
-You can duplicate `WezTerm.app` to create `Wezmux.app` as the bundle structure is identical.
+This builds release binaries, assembles `Wezmux.app`, ad-hoc codesigns the main binary, and installs to `/Applications/Wezmux.app`.
+
+To install to a custom location:
+```bash
+APP_DIR=~/Applications/Wezmux.app make install
+```
+
+### Development build
+
+Build to `target/Wezmux.app` without touching `/Applications`:
+
+```bash
+make bundle
+open target/Wezmux.app
+```
 
 ## Config
 
