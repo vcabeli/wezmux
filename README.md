@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/wezmux-logo.png" alt="Wezmux logo" width="200">
+</p>
+
 # Wezmux
 
 A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Built as a personal tool for running multiple AI coding agents side-by-side and knowing at a glance which workspace needs attention.
