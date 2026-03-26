@@ -77,6 +77,12 @@ pub fn confirm_quit_program(
 ) -> anyhow::Result<()> {
     if confirm::run_confirmation("🛑 Really Quit WezTerm?", &mut term)? {
         promise::spawn::spawn_into_main_thread(async move {
+            // Save session before quitting — windows are still alive
+            if let Some(mux) = mux::Mux::try_get() {
+                if let Err(err) = mux::session::save_session(&mux) {
+                    log::error!("Failed to save session on quit: {:#}", err);
+                }
+            }
             use ::window::{Connection, ConnectionOps};
             let con = Connection::get().expect("call on gui thread");
             con.terminate_message_loop();

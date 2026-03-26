@@ -100,12 +100,46 @@ struct WorkspaceMetadataTarget {
 
 impl SidebarState {
     pub fn new(config: &ConfigHandle) -> Self {
+        // Hydrate metadata from restored session cache if available
+        let metadata = if let Some(mux) = mux::Mux::try_get() {
+            let cache = mux.get_sidebar_cache();
+            if !cache.is_empty() {
+                cache
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k,
+                            WorkspaceMetadata {
+                                git_branch: v.git_branch,
+                                git_dirty: v.git_dirty,
+                                listening_ports: v.listening_ports,
+                                pull_request: v.pull_request.map(|pr| WorkspacePullRequest {
+                                    number: pr.number,
+                                    status: match pr.status.as_str() {
+                                        "Merged" => WorkspacePullRequestStatus::Merged,
+                                        "Closed" => WorkspacePullRequestStatus::Closed,
+                                        _ => WorkspacePullRequestStatus::Open,
+                                    },
+                                }),
+                                pull_request_checked_for_branch: None,
+                                pull_request_checked_at: None,
+                            },
+                        )
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
         Self {
             visible: config.sidebar.visible,
             hovered_workspace: None,
             override_width: None,
             scroll_offset: 0.0,
-            metadata: HashMap::new(),
+            metadata,
             metadata_targets: vec![],
             metadata_refresh_in_flight: false,
             next_metadata_refresh: None,
@@ -451,18 +485,8 @@ impl crate::TermWindow {
     }
 
     pub fn show_new_workspace_prompt(&mut self) {
-        let mux = Mux::get();
-        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab,
-            None => return,
-        };
-
-        let gui_win = GuiWin::new(self);
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::prompt::show_new_workspace_prompt_overlay(term, gui_win)
-        });
-        self.assign_overlay(tab.tab_id(), overlay);
-        promise::spawn::spawn(future).detach();
+        let name = Mux::get().generate_workspace_name();
+        self.spawn_named_workspace(name);
     }
 
     pub fn spawn_named_workspace(&mut self, name: String) {
@@ -546,6 +570,34 @@ impl crate::TermWindow {
     }
 
     fn finish_sidebar_metadata_refresh(&mut self, metadata: HashMap<String, WorkspaceMetadata>) {
+        // Sync to Mux for session persistence
+        if let Some(mux) = mux::Mux::try_get() {
+            let cache: HashMap<String, mux::session::SidebarCacheSerde> = metadata
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        mux::session::SidebarCacheSerde {
+                            git_branch: v.git_branch.clone(),
+                            git_dirty: v.git_dirty,
+                            listening_ports: v.listening_ports.clone(),
+                            pull_request: v.pull_request.as_ref().map(|pr| {
+                                mux::session::PullRequestSerde {
+                                    number: pr.number,
+                                    status: match pr.status {
+                                        WorkspacePullRequestStatus::Open => "Open".to_string(),
+                                        WorkspacePullRequestStatus::Merged => "Merged".to_string(),
+                                        WorkspacePullRequestStatus::Closed => "Closed".to_string(),
+                                    },
+                                }
+                            }),
+                        },
+                    )
+                })
+                .collect();
+            mux.set_sidebar_cache(cache);
+        }
+
         self.sidebar.metadata = metadata;
         self.sidebar.metadata_refresh_in_flight = false;
         self.invalidate_fancy_tab_bar();

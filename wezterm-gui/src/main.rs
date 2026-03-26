@@ -489,6 +489,24 @@ async fn async_run_terminal_gui(
             trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         }
     }
+    // Try to restore a previous session if this is a normal startup
+    // (no explicit command, no explicit domain)
+    if cmd.is_none() && domain.is_none() && !is_connecting {
+        match mux::session::restore_session(&mux, &mux.default_domain()).await {
+            Ok(true) => {
+                log::info!("Session restored successfully");
+                return Ok(());
+            }
+            Ok(false) => {
+                // No session to restore, proceed with normal startup
+            }
+            Err(err) => {
+                log::error!("Session restore failed: {:#}", err);
+                // Fall through to normal startup
+            }
+        }
+    }
+
     spawn_tab_in_domain_if_mux_is_empty(cmd, is_connecting, domain, opts.workspace).await
 }
 

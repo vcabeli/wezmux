@@ -93,6 +93,10 @@ impl NotificationStore {
             .unwrap_or(0) as u32
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Notification> {
+        self.notifications.iter()
+    }
+
     fn adjust_unread_counts(&mut self, pane_id: PaneId, workspace: &str, delta: isize) {
         adjust_count(&mut self.unread_by_pane, pane_id, delta);
         adjust_count(&mut self.unread_by_workspace, workspace.to_string(), delta);

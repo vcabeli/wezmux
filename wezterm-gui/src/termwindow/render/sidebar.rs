@@ -576,7 +576,6 @@ impl crate::TermWindow {
         let toolbar_items: Vec<Element> = vec![
             toolbar_button(&font, "\u{25EB}", UIItemType::SidebarSplitHorizontal), // ◫ split left|right
             toolbar_button(&font, "\u{229F}", UIItemType::SidebarSplitVertical),   // ⊟ split top/bottom
-            toolbar_button(&font, "+", UIItemType::SidebarNewWorkspace),
         ];
 
         root_children.push(
@@ -612,10 +611,14 @@ impl crate::TermWindow {
             root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, content_width));
         }
 
+        // Reserve space at the bottom for the fixed "New workspace" button
+        let new_ws_button_height = 40.0_f32;
+        let scrollable_height = (sidebar_height - new_ws_button_height).max(0.0);
+
         let root = Element::new(&font, ElementContent::Children(root_children))
             .display(DisplayType::Block)
             .min_width(Some(Dimension::Pixels(content_width.max(1.0))))
-            .min_height(Some(Dimension::Pixels(sidebar_height)))
+            .min_height(Some(Dimension::Pixels(scrollable_height)))
             .colors(ElementColors {
                 border: BorderColor::default(),
                 bg: sidebar_bg().into(),
@@ -627,7 +630,7 @@ impl crate::TermWindow {
             &LayoutContext {
                 height: DimensionContext {
                     dpi: self.dimensions.dpi as f32,
-                    pixel_max: sidebar_height,
+                    pixel_max: scrollable_height,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
@@ -635,7 +638,7 @@ impl crate::TermWindow {
                     pixel_max: content_width,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect(0., 0., content_width.max(1.0), sidebar_height),
+                bounds: euclid::rect(0., 0., content_width.max(1.0), scrollable_height),
                 metrics: &metrics,
                 gl_state,
                 zindex: 10,
@@ -645,7 +648,7 @@ impl crate::TermWindow {
 
         // Clamp scroll offset: content height minus visible height, minimum 0
         let content_height = computed.bounds.height();
-        let max_scroll = (content_height - sidebar_height).max(0.0);
+        let max_scroll = (content_height - scrollable_height).max(0.0);
         self.sidebar.scroll_offset = self.sidebar.scroll_offset.clamp(0.0, max_scroll);
         let scroll_offset = self.sidebar.scroll_offset;
 
@@ -667,6 +670,85 @@ impl crate::TermWindow {
 
         // Card + button UI items on top (higher priority for clicks)
         for item in computed.ui_items() {
+            self.ui_items.push(item);
+        }
+
+        // "New workspace" button — fixed at the bottom of the sidebar (not scrollable)
+        let new_ws_label = Element::new(&font, ElementContent::Text("+  New workspace".to_string()))
+            .colors(ElementColors {
+                border: BorderColor::default(),
+                bg: InheritableColor::Inherited,
+                text: sidebar_muted().into(),
+            })
+            .hover_colors(Some(ElementColors {
+                border: BorderColor::default(),
+                bg: InheritableColor::Inherited,
+                text: sidebar_text().into(),
+            }))
+            .item_type(UIItemType::SidebarNewWorkspace);
+
+        let new_ws_button = Element::new(&font, ElementContent::Children(vec![new_ws_label]))
+            .display(DisplayType::Block)
+            .min_width(Some(Dimension::Pixels(content_width.max(1.0))))
+            .padding(BoxDimension {
+                left: Dimension::Pixels(14.),
+                right: Dimension::Pixels(14.),
+                top: Dimension::Pixels(10.),
+                bottom: Dimension::Pixels(10.),
+            })
+            .border(BoxDimension {
+                left: Dimension::Pixels(0.),
+                right: Dimension::Pixels(0.),
+                top: Dimension::Pixels(1.),
+                bottom: Dimension::Pixels(0.),
+            })
+            .colors(ElementColors {
+                border: BorderColor {
+                    top: sidebar_separator(),
+                    bottom: LinearRgba::TRANSPARENT,
+                    left: LinearRgba::TRANSPARENT,
+                    right: LinearRgba::TRANSPARENT,
+                },
+                bg: sidebar_bg().into(),
+                text: InheritableColor::Inherited,
+            })
+            .hover_colors(Some(ElementColors {
+                border: BorderColor {
+                    top: sidebar_separator(),
+                    bottom: LinearRgba::TRANSPARENT,
+                    left: LinearRgba::TRANSPARENT,
+                    right: LinearRgba::TRANSPARENT,
+                },
+                bg: LinearRgba::with_srgba(255, 255, 255, 15).into(),
+                text: InheritableColor::Inherited,
+            }))
+            .item_type(UIItemType::SidebarNewWorkspace);
+
+        let button_y = sidebar_y + scrollable_height;
+
+        let mut btn_computed = self.compute_element(
+            &LayoutContext {
+                height: DimensionContext {
+                    dpi: self.dimensions.dpi as f32,
+                    pixel_max: new_ws_button_height,
+                    pixel_cell: metrics.cell_size.height as f32,
+                },
+                width: DimensionContext {
+                    dpi: self.dimensions.dpi as f32,
+                    pixel_max: content_width,
+                    pixel_cell: metrics.cell_size.width as f32,
+                },
+                bounds: euclid::rect(0., 0., content_width.max(1.0), new_ws_button_height),
+                metrics: &metrics,
+                gl_state,
+                zindex: 11,
+            },
+            &new_ws_button,
+        )?;
+
+        btn_computed.translate(euclid::vec2(sidebar_x, button_y));
+        self.render_element(&btn_computed, gl_state, None)?;
+        for item in btn_computed.ui_items() {
             self.ui_items.push(item);
         }
 

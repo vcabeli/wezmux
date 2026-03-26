@@ -1958,7 +1958,7 @@ impl Default for WindowPadding {
 }
 
 fn default_sidebar_width() -> Dimension {
-    Dimension::Pixels(240.)
+    Dimension::Pixels(280.)
 }
 
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]

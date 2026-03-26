@@ -43,6 +43,7 @@ pub mod agent_status;
 pub mod notification;
 pub mod pane;
 pub mod renderable;
+pub mod session;
 pub mod ssh;
 pub mod ssh_agent;
 pub mod tab;
@@ -120,6 +121,7 @@ pub struct Mux {
     agent_status_store: Mutex<agent_status::AgentStatusStore>,
     main_thread_id: std::thread::ThreadId,
     agent: Option<AgentProxy>,
+    sidebar_cache_for_session: Mutex<HashMap<String, session::SidebarCacheSerde>>,
 }
 
 const BUFSIZE: usize = 1024 * 1024;
@@ -457,6 +459,7 @@ impl Mux {
             agent_status_store: Mutex::new(agent_status::AgentStatusStore::default()),
             main_thread_id: std::thread::current().id(),
             agent,
+            sidebar_cache_for_session: Mutex::new(HashMap::new()),
         }
     }
 
@@ -601,15 +604,40 @@ impl Mux {
         names
     }
 
-    /// Generate a new unique workspace name
+    /// Generate a new unique workspace name using the scheme:
+    /// default, defaulta, defaultb, ... defaultz, defaultza, defaultzb, ...
     pub fn generate_workspace_name(&self) -> String {
-        let used = self.iter_workspaces();
-        for candidate in names::Generator::default() {
-            if !used.contains(&candidate) {
-                return candidate;
+        let used: std::collections::HashSet<String> =
+            self.iter_workspaces().into_iter().collect();
+
+        // First try "default" itself
+        if !used.contains("default") {
+            return "default".to_string();
+        }
+
+        // Then try defaulta..defaultz, defaultza..defaultzz, etc.
+        let mut suffix = vec![b'a'];
+        loop {
+            let name = format!("default{}", std::str::from_utf8(&suffix).unwrap());
+            if !used.contains(&name) {
+                return name;
+            }
+            // Increment: a->b, z->za, zz->zza, etc.
+            let mut carry = true;
+            for ch in suffix.iter_mut().rev() {
+                if carry {
+                    if *ch == b'z' {
+                        *ch = b'a';
+                    } else {
+                        *ch += 1;
+                        carry = false;
+                    }
+                }
+            }
+            if carry {
+                suffix.insert(0, b'a');
             }
         }
-        unreachable!();
     }
 
     /// Returns the effective active workspace name
@@ -894,6 +922,14 @@ impl Mux {
 
     pub fn shutdown() {
         MUX.lock().take();
+    }
+
+    pub fn set_sidebar_cache(&self, cache: HashMap<String, session::SidebarCacheSerde>) {
+        *self.sidebar_cache_for_session.lock() = cache;
+    }
+
+    pub fn get_sidebar_cache(&self) -> HashMap<String, session::SidebarCacheSerde> {
+        self.sidebar_cache_for_session.lock().clone()
     }
 
     pub fn get() -> Arc<Mux> {

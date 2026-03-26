@@ -2832,7 +2832,11 @@ impl TermWindow {
             QuitApplication => {
                 let mux = Mux::get();
                 let config = &self.config;
-                log::info!("QuitApplication over here (window)");
+
+                // Save session before quitting — windows are still alive here
+                if let Err(err) = mux::session::save_session(&mux) {
+                    log::error!("Failed to save session: {:#}", err);
+                }
 
                 match config.window_close_confirmation {
                     WindowCloseConfirmation::NeverPrompt => {

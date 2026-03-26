@@ -1022,6 +1022,13 @@ impl LocalPane {
         }
     }
 
+    /// Feed raw bytes (e.g. saved ANSI escape sequences) directly into the
+    /// terminal emulator without going through the PTY. Used to replay
+    /// scrollback content during session restore.
+    pub fn feed_bytes(&self, data: &[u8]) {
+        self.terminal.lock().advance_bytes(data);
+    }
+
     #[cfg(unix)]
     fn get_leader(&self, policy: CachePolicy) -> CachedLeaderInfo {
         let mut leader = self.leader.lock();
