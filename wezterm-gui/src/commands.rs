@@ -775,7 +775,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         JumpToUnreadNotification => CommandDef {
             brief: "Jump to Unread Notification".into(),
             doc: "Focus the pane with the most recent unread notification".into(),
-            keys: vec![(Modifiers::SUPER | Modifiers::SHIFT, "u".into())],
+            keys: vec![(Modifiers::ALT, "u".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["View"],
             icon: None,
@@ -2076,6 +2076,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         SpawnWindow,
         PromptNewWorkspace,
         ToggleSidebar,
+        JumpToUnreadNotification,
         SplitVertical(SpawnCommand {
             domain: SpawnTabDomain::CurrentPaneDomain,
             ..Default::default()
