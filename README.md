@@ -2,6 +2,8 @@
 
 A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Built as a personal tool for running multiple AI coding agents side-by-side and knowing at a glance which workspace needs attention.
 
+![Wezmux screenshot](assets/screenshot.png)
+
 ## What's different from WezTerm
 
 **Persistent sidebar** showing per-workspace metadata:
