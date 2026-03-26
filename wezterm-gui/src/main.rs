@@ -67,7 +67,7 @@ pub use termwindow::{set_window_class, set_window_position, TermWindow, ICON_DAT
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Wezmux — workspace-aware terminal\nhttps://github.com/vincentcabeli/wezmux",
+    about = "Wezmux — workspace-aware terminal\nhttps://github.com/vcabeli/wezmux",
     version = config::wezterm_version()
 )]
 struct Opt {

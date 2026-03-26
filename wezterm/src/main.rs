@@ -23,7 +23,7 @@ mod cli;
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Wezmux — workspace-aware terminal\nhttps://github.com/vincentcabeli/wezmux",
+    about = "Wezmux — workspace-aware terminal\nhttps://github.com/vcabeli/wezmux",
     version = wezterm_version()
 )]
 pub struct Opt {
