@@ -1,0 +1,54 @@
+# Builds and releases Wezmux.app bundle on version tags (v*)
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binaries
+        run: cargo build --release -p wezterm-gui -p wezterm -p wezterm-mux-server -p strip-ansi-escapes
+
+      - name: Assemble app bundle
+        run: |
+          mkdir -p Wezmux.app/Contents/MacOS Wezmux.app/Contents/Resources
+          cp target/release/wezterm-gui Wezmux.app/Contents/MacOS/
+          cp target/release/wezterm Wezmux.app/Contents/MacOS/
+          cp target/release/wezterm-mux-server Wezmux.app/Contents/MacOS/
+          cp target/release/strip-ansi-escapes Wezmux.app/Contents/MacOS/
+          cp assets/macos/WezTerm.app/Contents/Info.plist Wezmux.app/Contents/
+          cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns Wezmux.app/Contents/Resources/
+          codesign --force --sign - Wezmux.app/Contents/MacOS/wezterm-gui
+
+      - name: Create zip archive
+        run: ditto -c -k --keepParent Wezmux.app Wezmux-macos.zip
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Wezmux-macos.zip
+          generate_release_notes: true
