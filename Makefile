@@ -40,8 +40,12 @@ install:
 	cp target/release/wezterm $(APP_DIR)/Contents/MacOS/wezterm
 	cp target/release/wezterm-mux-server $(APP_DIR)/Contents/MacOS/wezterm-mux-server
 	cp target/release/strip-ansi-escapes $(APP_DIR)/Contents/MacOS/strip-ansi-escapes
-	cp target/release/wezterm-gui $(APP_DIR)/Contents/MacOS/wezterm-gui
-	codesign --force --deep --sign - $(APP_DIR)
+	cp target/release/wezterm-gui /tmp/wezterm-gui
+	codesign --force --sign - /tmp/wezterm-gui
+	cp /tmp/wezterm-gui $(APP_DIR)/Contents/MacOS/wezterm-gui
+	rm /tmp/wezterm-gui
+	cp -R bin $(APP_DIR)/Contents/MacOS/bin
+	chmod +x $(APP_DIR)/Contents/MacOS/bin/claude $(APP_DIR)/Contents/MacOS/bin/hooks/*.sh
 	xattr -cr $(APP_DIR)
 	@echo "Wezmux.app installed to $(APP_DIR)"
 
@@ -55,5 +59,7 @@ bundle:
 	cp assets/macos/WezTerm.app/Contents/Info.plist target/Wezmux.app/Contents/Info.plist
 	mkdir -p target/Wezmux.app/Contents/Resources
 	cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns target/Wezmux.app/Contents/Resources/terminal.icns
+	cp -R bin target/Wezmux.app/Contents/MacOS/bin
+	chmod +x target/Wezmux.app/Contents/MacOS/bin/claude target/Wezmux.app/Contents/MacOS/bin/hooks/*.sh
 	codesign --force --sign - target/Wezmux.app/Contents/MacOS/wezterm-gui
 	@echo "Wezmux.app bundle ready at target/Wezmux.app"
