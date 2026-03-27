@@ -10,7 +10,7 @@ A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace mana
 
 ## Why ?
 
-Because cmux was disappointing and I mean WezTerm is just the dream
+Because cmux was disappointing (and I don't need a browser in my terminal) and I mean WezTerm is just the dream
 
 ## What's different from WezTerm
 
