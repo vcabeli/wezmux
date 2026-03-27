@@ -24,6 +24,8 @@ pub enum ApplicationEvent {
     /// The system wants to open a command in the terminal
     OpenCommandScript(String),
     PerformKeyAssignment(KeyAssignment),
+    /// Global hotkey fired — toggle app visibility
+    ToggleApplication,
 }
 
 pub trait ConnectionOps {
@@ -72,6 +74,12 @@ pub trait ConnectionOps {
     /// This actions hides all of the windows of the application and switches
     /// focus away from it.
     fn hide_application(&self) {}
+
+    /// Toggle application visibility (for global hotkey).
+    /// Returns true if the app was hidden, false if it was shown.
+    fn toggle_application(&self) -> bool {
+        false
+    }
 
     /// Perform the system beep/notification sound
     fn beep(&self) {}

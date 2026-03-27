@@ -8,7 +8,10 @@ use crate::os::macos::app::create_app_delegate;
 use crate::screen::{ScreenInfo, Screens};
 use crate::spawn::*;
 use crate::Appearance;
-use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSScreen};
+use cocoa::appkit::{
+    NSApp, NSApplication, NSApplicationActivateIgnoringOtherApps,
+    NSApplicationActivationPolicyRegular, NSRunningApplication, NSScreen,
+};
 use cocoa::base::{id, nil};
 use cocoa::foundation::{NSArray, NSInteger};
 use objc::runtime::{Object, BOOL, YES};
@@ -18,6 +21,118 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
+
+// Carbon hotkey types and constants
+const K_EVENT_HOT_KEY_PRESSED: u32 = 5;
+const K_EVENT_CLASS_KEYBOARD: u32 = u32::from_be_bytes(*b"keyb");
+
+type EventHandlerRef = *mut std::ffi::c_void;
+type EventHotKeyRef = *mut std::ffi::c_void;
+type EventTargetRef = *mut std::ffi::c_void;
+type EventHandlerUPP = Option<
+    unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+    ) -> i32,
+>;
+
+#[repr(C)]
+struct EventTypeSpec {
+    event_class: u32,
+    event_kind: u32,
+}
+
+#[repr(C)]
+struct EventHotKeyID {
+    signature: u32,
+    id: u32,
+}
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn GetApplicationEventTarget() -> EventTargetRef;
+    fn InstallEventHandler(
+        target: EventTargetRef,
+        handler: EventHandlerUPP,
+        num_types: u32,
+        list: *const EventTypeSpec,
+        user_data: *mut std::ffi::c_void,
+        out_ref: *mut EventHandlerRef,
+    ) -> i32;
+    fn RegisterEventHotKey(
+        key_code: u32,
+        modifiers: u32,
+        id: EventHotKeyID,
+        target: EventTargetRef,
+        options: u32,
+        out_ref: *mut EventHotKeyRef,
+    ) -> i32;
+}
+
+// Carbon modifier: optionKey
+const OPTION_KEY: u32 = 0x0800;
+// Virtual keycode for backtick/grave accent on US keyboard
+const K_VK_ANSI_GRAVE: u32 = 0x32;
+
+unsafe extern "C" fn hotkey_handler(
+    _next: *mut std::ffi::c_void,
+    _event: *mut std::ffi::c_void,
+    _user_data: *mut std::ffi::c_void,
+) -> i32 {
+    use crate::connection::ConnectionOps;
+    use crate::ApplicationEvent;
+    // Dispatch on main thread — we're already on it (Carbon handlers run on the main run loop)
+    // but spawn_into_main_thread is the safe way to reach Connection::get()
+    promise::spawn::spawn_into_main_thread(async move {
+        if let Some(conn) = Connection::get() {
+            conn.dispatch_app_event(ApplicationEvent::ToggleApplication);
+        }
+    })
+    .detach();
+    0 // noErr
+}
+
+fn register_global_hotkey() {
+    unsafe {
+        let event_type = EventTypeSpec {
+            event_class: K_EVENT_CLASS_KEYBOARD,
+            event_kind: K_EVENT_HOT_KEY_PRESSED,
+        };
+        let mut handler_ref: EventHandlerRef = std::ptr::null_mut();
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            Some(hotkey_handler),
+            1,
+            &event_type,
+            std::ptr::null_mut(),
+            &mut handler_ref,
+        );
+        if status != 0 {
+            log::error!("Failed to install Carbon event handler: {status}");
+            return;
+        }
+
+        let hotkey_id = EventHotKeyID {
+            signature: u32::from_be_bytes(*b"WZMX"),
+            id: 1,
+        };
+        let mut hotkey_ref: EventHotKeyRef = std::ptr::null_mut();
+        let status = RegisterEventHotKey(
+            K_VK_ANSI_GRAVE,
+            OPTION_KEY,
+            hotkey_id,
+            GetApplicationEventTarget(),
+            0,
+            &mut hotkey_ref,
+        );
+        if status != 0 {
+            log::error!("Failed to register global hotkey: {status}");
+            return;
+        }
+        log::info!("Registered global hotkey Alt+` for toggle");
+    }
+}
 
 pub struct Connection {
     ns_app: id,
@@ -38,6 +153,8 @@ impl Connection {
 
             let delegate = create_app_delegate();
             let () = msg_send![ns_app, setDelegate: delegate];
+
+            register_global_hotkey();
 
             let conn = Self {
                 ns_app,
@@ -163,6 +280,22 @@ impl ConnectionOps for Connection {
     fn hide_application(&self) {
         unsafe {
             let () = msg_send![self.ns_app, hide: self.ns_app];
+        }
+    }
+
+    fn toggle_application(&self) -> bool {
+        unsafe {
+            let current_app = NSRunningApplication::currentApplication(nil);
+            let is_active: BOOL = msg_send![current_app, isActive];
+            if is_active != objc::runtime::NO {
+                let () = msg_send![self.ns_app, hide: self.ns_app];
+                true
+            } else {
+                let () = msg_send![self.ns_app, unhide: self.ns_app];
+                current_app
+                    .activateWithOptions_(NSApplicationActivateIgnoringOtherApps);
+                false
+            }
         }
     }
 

@@ -272,6 +272,10 @@ impl GuiFrontEnd {
                 })
                 .detach();
             }
+            ApplicationEvent::ToggleApplication => {
+                let conn = Connection::get().expect("running on gui thread");
+                conn.toggle_application();
+            }
             ApplicationEvent::PerformKeyAssignment(action) => {
                 // We should only get here when there are no windows open
                 // and the user picks an action from the menubar.
