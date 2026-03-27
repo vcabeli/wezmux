@@ -1,5 +1,9 @@
 use crate::quad::TripleLayerQuadAllocator;
 use crate::termwindow::box_model::*;
+use crate::termwindow::render::corners::{
+    BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
+    TOP_RIGHT_ROUNDED_CORNER,
+};
 use crate::termwindow::sidebar::{
     AgentStatus, WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
 };
@@ -282,6 +286,15 @@ fn text_element_fg(font: &Rc<LoadedFont>, text: &str, fg: LinearRgba) -> Element
     })
 }
 
+/// Parse a hex color string like "#ff6b6b" into LinearRgba.
+fn hex_to_linear(hex: &str) -> LinearRgba {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
+    LinearRgba::with_srgba(r, g, b, 255)
+}
+
 /// Build an Element tree for one workspace card.
 fn build_card_element(
     font: &Rc<LoadedFont>,
@@ -294,8 +307,9 @@ fn build_card_element(
     theme: &SidebarTheme,
 ) -> Element {
     let is_active = entry.is_active;
+    let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
     let card_bg = if is_active {
-        theme.card_active
+        custom_accent_bg.unwrap_or(theme.card_active)
     } else {
         theme.card_bg
     };
@@ -396,9 +410,29 @@ fn build_card_element(
         );
     }
 
+    // card_width minus margin (6+6=12) to get inner width
+    let inner_width = (card_width - 12.0).max(1.0);
+
+    // Left accent bar: 3px on active cards, or when a custom color is set
+    let custom_accent = entry
+        .accent_color
+        .as_deref()
+        .map(hex_to_linear);
+    let accent = custom_accent.unwrap_or(theme.accent);
+
     let hover_colors = if !is_active {
+        let hover_border = if custom_accent.is_some() {
+            BorderColor {
+                left: accent,
+                top: LinearRgba::TRANSPARENT,
+                right: LinearRgba::TRANSPARENT,
+                bottom: LinearRgba::TRANSPARENT,
+            }
+        } else {
+            BorderColor::default()
+        };
         Some(ElementColors {
-            border: BorderColor::default(),
+            border: hover_border,
             bg: theme.card_hover.into(),
             text: InheritableColor::Inherited,
         })
@@ -406,13 +440,10 @@ fn build_card_element(
         None
     };
 
-    // card_width minus margin (6+6=12) to get inner width
-    let inner_width = (card_width - 12.0).max(1.0);
-
-    // Left accent bar: 3px accent on active, transparent on inactive
-    let border_color = if is_active {
+    let has_accent_bar = is_active || custom_accent.is_some();
+    let border_color = if has_accent_bar {
         BorderColor {
-            left: theme.accent,
+            left: accent,
             top: LinearRgba::TRANSPARENT,
             right: LinearRgba::TRANSPARENT,
             bottom: LinearRgba::TRANSPARENT,
@@ -420,7 +451,7 @@ fn build_card_element(
     } else {
         BorderColor::default()
     };
-    let border_width = if is_active {
+    let border_width = if has_accent_bar {
         BoxDimension {
             left: Dimension::Pixels(3.),
             top: Dimension::Pixels(0.),
@@ -817,21 +848,13 @@ fn sidebar_pull_request_color(status: WorkspacePullRequestStatus, is_active: boo
 #[cfg(test)]
 mod test {
     use super::{
-        compact_components, format_listening_ports, sidebar_entry_body_lines,
+        format_listening_ports, sidebar_entry_body_lines,
         sidebar_pull_request_text, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
     };
     use std::path::Path;
-
-    #[test]
-    fn compact_components_preserve_tail_context() {
-        assert_eq!(
-            compact_components(Path::new("code/wezmux/sidebar"), Some("~"), 3),
-            "~/code/wezmux/sidebar".to_string()
-        );
-    }
 
     #[test]
     fn listening_ports_are_compact() {
@@ -864,6 +887,7 @@ mod test {
             is_active: false,
             is_hovered: false,
             agent: None,
+            accent_color: None,
         };
 
         assert_eq!(

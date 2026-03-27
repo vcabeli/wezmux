@@ -357,12 +357,48 @@ impl GuiFrontEnd {
                 promise.ok(());
                 return promise.get_future().unwrap();
             }
-            for workspace in mux.iter_workspaces() {
-                if !mux.is_workspace_empty(&workspace) {
-                    mux.set_active_workspace_for_client(&self.client_id, &workspace);
-                    log::debug!("using {} instead, as it is not empty", workspace);
-                    break;
-                }
+            // Pick the next workspace in display order (not alphabetical).
+            // The closing workspace may already be gone from iter_workspaces(),
+            // so include it explicitly so apply_order can find its position.
+            let mut all_workspaces = mux.iter_workspaces();
+            if !all_workspaces.contains(&workspace) {
+                all_workspaces.push(workspace.clone());
+            }
+            let configs = crate::termwindow::workspace_config::WorkspaceConfigs::load();
+            let ordered = configs.apply_order(&all_workspaces);
+            let closing_idx = ordered.iter().position(|w| w == &workspace);
+
+            // Try next in order, then previous, then any non-empty
+            let next_ws = closing_idx
+                .and_then(|idx| {
+                    // Look forward first
+                    ordered[idx + 1..]
+                        .iter()
+                        .find(|w| !mux.is_workspace_empty(w))
+                        .or_else(|| {
+                            // Then look backward
+                            ordered[..idx]
+                                .iter()
+                                .rev()
+                                .find(|w| !mux.is_workspace_empty(w))
+                        })
+                })
+                .or_else(|| {
+                    // Fallback: any non-empty workspace
+                    ordered.iter().find(|w| !mux.is_workspace_empty(w))
+                });
+
+            if let Some(next) = next_ws {
+                mux.set_active_workspace_for_client(&self.client_id, next);
+                log::debug!("switching to next workspace in order: {}", next);
+            }
+
+            // Clean up persisted config for the closed workspace so new
+            // workspaces with the same name don't inherit stale colors.
+            let mut configs = configs;
+            configs.remove_workspace(&workspace);
+            if let Err(e) = configs.save() {
+                log::error!("Failed to save workspace configs: {:#}", e);
             }
         }
 

@@ -84,6 +84,7 @@ mod selection;
 pub mod sidebar;
 pub mod spawn;
 pub mod webgpu;
+pub mod workspace_config;
 use crate::spawn::SpawnWhere;
 use prevcursor::PrevCursorPos;
 
@@ -1023,7 +1024,9 @@ impl TermWindow {
                 }
             }
             WindowEvent::Notification(item) => {
-                if let Ok(notif) = item.downcast::<TermWindowNotif>() {
+                if let Some(ctx_notif) = item.downcast_ref::<::window::ContextMenuNotification>() {
+                    self.handle_context_menu_selection(ctx_notif.0, window);
+                } else if let Ok(notif) = item.downcast::<TermWindowNotif>() {
                     self.dispatch_notif(*notif, window)
                         .context("dispatch_notif")?;
                 }
@@ -3049,7 +3052,7 @@ impl TermWindow {
             SwitchWorkspaceRelative(delta) => {
                 let mux = Mux::get();
                 let workspace = mux.active_workspace();
-                let workspaces = mux.iter_workspaces();
+                let workspaces = self.ordered_workspaces();
                 let idx = workspaces.iter().position(|w| *w == workspace).unwrap_or(0);
                 let new_idx = idx as isize + delta;
                 let new_idx = if new_idx < 0 {
@@ -3064,7 +3067,7 @@ impl TermWindow {
             }
             ActivateWorkspaceByIndex(index) => {
                 let mux = Mux::get();
-                let workspaces = mux.iter_workspaces();
+                let workspaces = self.ordered_workspaces();
                 if let Some(w) = workspaces.get(*index) {
                     mux.mark_workspace_notifications_read(w);
                     front_end().switch_workspace(w);

@@ -11,8 +11,6 @@ use url::Url;
 use window::WindowOps;
 
 use crate::frontend::WorkspaceSwitcher;
-use crate::overlay::start_overlay;
-use crate::scripting::guiwin::GuiWin;
 use crate::spawn::SpawnWhere;
 use procinfo::LocalProcessInfo;
 use std::sync::Arc;
@@ -43,6 +41,10 @@ pub struct SidebarState {
     cached_agent_status_generation: u64,
     /// Last detected agent type per pane — survives transient process detection failures.
     pub last_known_agents: HashMap<PaneId, AgentType>,
+    /// Workspace targeted by the currently open native context menu, if any.
+    pub context_menu_workspace: Option<String>,
+    /// Per-workspace customizations (display name, accent color, ordering).
+    pub workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -151,6 +153,8 @@ impl SidebarState {
             cached_hovered_workspace: None,
             cached_agent_status_generation: 0,
             last_known_agents: HashMap::new(),
+            context_menu_workspace: None,
+            workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs::load(),
         }
     }
 
@@ -209,6 +213,8 @@ pub struct WorkspaceEntry {
     pub is_active: bool,
     pub is_hovered: bool,
     pub agent: Option<AgentInfo>,
+    /// Custom accent color from workspace config (hex string like "#ff6b6b").
+    pub accent_color: Option<String>,
 }
 
 pub fn configured_pixel_width(config: &ConfigHandle, context: DimensionContext) -> usize {
@@ -238,6 +244,15 @@ impl crate::TermWindow {
             self.dimensions.pixel_width as f32,
             self.render_metrics.cell_size.width as f32,
         ) as f32
+    }
+
+    /// Returns workspace names in the user's configured display order.
+    /// This must be used everywhere that maps indices to workspaces
+    /// (Cmd+1-9, relative switching) so shortcuts match the sidebar.
+    pub fn ordered_workspaces(&self) -> Vec<String> {
+        let mux = Mux::get();
+        let raw = mux.iter_workspaces();
+        self.sidebar.workspace_configs.apply_order(&raw)
     }
 
     pub fn tab_bar_pixel_bounds(&self) -> (f32, f32) {
@@ -313,8 +328,9 @@ impl crate::TermWindow {
         let hovered = hovered.as_deref();
         let mut refresh_targets = vec![];
 
-        let entries: Vec<_> = mux
-            .iter_workspaces()
+        let mux_workspaces = mux.iter_workspaces();
+        let ordered_names = self.sidebar.workspace_configs.apply_order(&mux_workspaces);
+        let entries: Vec<_> = ordered_names
             .into_iter()
             .map(|name| {
                 let mut title = name.clone();
@@ -414,6 +430,14 @@ impl crate::TermWindow {
                     });
                 }
 
+                // Apply display name override from workspace config
+                let display_title = self
+                    .sidebar
+                    .workspace_configs
+                    .display_name(&name);
+                let title = if display_title != name { display_title } else { title };
+                let accent_color = self.sidebar.workspace_configs.accent_color(&name);
+
                 WorkspaceEntry {
                     is_active: active_workspace == name,
                     is_hovered: hovered == Some(name.as_str()),
@@ -430,6 +454,7 @@ impl crate::TermWindow {
                     tab_count,
                     pane_count,
                     agent,
+                    accent_color,
                 }
             })
             .collect();
@@ -497,8 +522,97 @@ impl crate::TermWindow {
         }
     }
 
+    /// Handle a native context menu selection.
+    /// Tags: 1=Rename, 2=MoveUp, 3=MoveDown, 4=MoveToTop, 5=MoveToBottom,
+    ///        6=Close, 100=ColorReset, 101-108=Color swatches
+    pub fn handle_context_menu_selection(&mut self, tag: usize, window: &::window::Window) {
+        let workspace = match self.sidebar.context_menu_workspace.take() {
+            Some(name) => name,
+            None => return,
+        };
+
+        const COLOR_HEXES: &[&str] = &[
+            "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c",
+            "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
+        ];
+
+        match tag {
+            2 => {
+                let all = Mux::get().iter_workspaces();
+                self.sidebar.workspace_configs.move_up(&workspace, &all);
+            }
+            3 => {
+                let all = Mux::get().iter_workspaces();
+                self.sidebar.workspace_configs.move_down(&workspace, &all);
+            }
+            4 => {
+                let all = Mux::get().iter_workspaces();
+                self.sidebar.workspace_configs.move_to_top(&workspace, &all);
+            }
+            5 => {
+                let all = Mux::get().iter_workspaces();
+                self.sidebar.workspace_configs.move_to_bottom(&workspace, &all);
+            }
+            6 => {
+                self.close_workspace_by_name(&workspace);
+            }
+            100 => {
+                self.sidebar.workspace_configs.set_accent_color(&workspace, None);
+            }
+            101..=108 => {
+                let idx = tag - 101;
+                if let Some(hex) = COLOR_HEXES.get(idx) {
+                    self.sidebar.workspace_configs.set_accent_color(&workspace, Some(hex.to_string()));
+                }
+            }
+            _ => {}
+        }
+
+        if let Err(e) = self.sidebar.workspace_configs.save() {
+            log::error!("Failed to save workspace configs: {:#}", e);
+        }
+        self.sidebar.invalidate_cache();
+        window.invalidate();
+    }
+
+    /// Close workspace by name (used by context menu handler).
+    fn close_workspace_by_name(&mut self, workspace: &str) {
+        let mux = Mux::get();
+        if mux.active_workspace() == workspace {
+            // Switch to the next workspace in display order
+            let ordered = self.ordered_workspaces();
+            let idx = ordered.iter().position(|w| w == workspace).unwrap_or(0);
+            let next = if idx + 1 < ordered.len() {
+                Some(ordered[idx + 1].clone())
+            } else if idx > 0 {
+                Some(ordered[idx - 1].clone())
+            } else {
+                None
+            };
+            if let Some(ref next_ws) = next {
+                crate::frontend::front_end().switch_workspace(next_ws);
+            } else {
+                return; // Only workspace, don't close
+            }
+        }
+        let window_ids: Vec<_> = mux.iter_windows_in_workspace(workspace);
+        for window_id in window_ids {
+            mux.kill_window(window_id);
+        }
+        self.sidebar.workspace_configs.remove_workspace(workspace);
+    }
+
     pub fn show_new_workspace_prompt(&mut self) {
         let name = Mux::get().generate_workspace_name();
+        // Clear any stale config from a previous workspace with the same recycled name
+        self.sidebar.workspace_configs.remove_workspace(&name);
+        // Explicitly place new workspace at the bottom of the ordering
+        // so it doesn't jump to a random alphabetical position.
+        let all = Mux::get().iter_workspaces();
+        self.sidebar.workspace_configs.move_to_bottom(&name, &all);
+        if let Err(e) = self.sidebar.workspace_configs.save() {
+            log::error!("Failed to save workspace configs: {:#}", e);
+        }
         self.spawn_named_workspace(name);
     }
 

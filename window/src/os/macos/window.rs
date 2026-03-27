@@ -8,10 +8,11 @@ use crate::connection::ConnectionOps;
 use crate::os::macos::menu::{MenuItem, RepresentedItem};
 use crate::parameters::{Border, Parameters, TitleBar};
 use crate::{
-    Clipboard, Connection, DeadKeyStatus, Dimensions, Handled, KeyCode, KeyEvent, Modifiers,
-    MouseButtons, MouseCursor, MouseEvent, MouseEventKind, MousePress, Point, RawKeyEvent, Rect,
-    RequestedWindowGeometry, ResizeIncrement, ResolvedGeometry, ScreenPoint, Size, ULength,
-    WindowDecorations, WindowEvent, WindowEventSender, WindowOps, WindowState,
+    Clipboard, Connection, ContextMenuItem, ContextMenuNotification, DeadKeyStatus, Dimensions,
+    Handled, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseCursor, MouseEvent, MouseEventKind,
+    MousePress, Point, RawKeyEvent, Rect, RequestedWindowGeometry, ResizeIncrement,
+    ResolvedGeometry, ScreenPoint, Size, ULength, WindowDecorations, WindowEvent,
+    WindowEventSender, WindowOps, WindowState,
 };
 use anyhow::{anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -929,6 +930,89 @@ impl WindowOps for Window {
             },
             border_dimensions,
         }))
+    }
+
+    fn show_context_menu(&self, items: Vec<ContextMenuItem>, coords: ScreenPoint) {
+        let window_id = self.id;
+        Connection::with_window_inner(window_id, move |inner| {
+            unsafe {
+                use cocoa::appkit::NSMenu;
+                use cocoa::foundation::NSPoint;
+
+                let menu: id = NSMenu::alloc(nil).initWithTitle_(*nsstring(""));
+                let () = msg_send![menu, setAutoenablesItems: NO];
+
+                unsafe fn build_menu(menu: id, items: &[ContextMenuItem]) {
+                    for item in items {
+                        match item {
+                            ContextMenuItem::Entry { label, tag } => {
+                                let ns_item: id = msg_send![
+                                    cocoa::appkit::NSMenuItem::alloc(nil),
+                                    initWithTitle:*nsstring(label)
+                                    action:sel!(weztermContextMenuAction:)
+                                    keyEquivalent:*nsstring("")
+                                ];
+                                let () = msg_send![ns_item, setTag: *tag as NSInteger];
+                                let () = msg_send![menu, addItem: ns_item];
+                            }
+                            ContextMenuItem::Separator => {
+                                let sep = cocoa::appkit::NSMenuItem::separatorItem(nil);
+                                let () = msg_send![menu, addItem: sep];
+                            }
+                            ContextMenuItem::SubMenu { label, items: sub_items } => {
+                                let ns_item: id = msg_send![
+                                    cocoa::appkit::NSMenuItem::alloc(nil),
+                                    initWithTitle:*nsstring(label)
+                                    action:nil
+                                    keyEquivalent:*nsstring("")
+                                ];
+                                let sub_menu: id = cocoa::appkit::NSMenu::alloc(nil)
+                                    .initWithTitle_(*nsstring(label));
+                                build_menu(sub_menu, sub_items);
+                                let () = msg_send![ns_item, setSubmenu: sub_menu];
+                                let () = msg_send![menu, addItem: ns_item];
+                            }
+                        }
+                    }
+                }
+
+                build_menu(menu, &items);
+
+                // Convert pixel coords to window point coords for popup location.
+                // coords are in physical pixels; macOS needs logical points.
+                let view = *inner.view;
+                let backing_scale: CGFloat = msg_send![*inner.window, backingScaleFactor];
+                let frame: NSRect = msg_send![view, frame];
+                let window_point = NSPoint::new(
+                    coords.x as f64 / backing_scale,
+                    // Flip Y: macOS view coords have origin at bottom-left
+                    frame.size.height - coords.y as f64 / backing_scale,
+                );
+
+                // popUpContextMenu needs an NSEvent; create a synthetic one
+                let window_num: NSInteger = msg_send![*inner.window, windowNumber];
+                let event: id = msg_send![
+                    class!(NSEvent),
+                    mouseEventWithType: cocoa::appkit::NSEventType::NSRightMouseDown
+                    location: window_point
+                    modifierFlags: NSEventModifierFlags::empty()
+                    timestamp: 0.0f64
+                    windowNumber: window_num
+                    context: nil
+                    eventNumber: 0 as NSInteger
+                    clickCount: 1 as NSInteger
+                    pressure: 0.0f32
+                ];
+
+                let () = msg_send![
+                    class!(NSMenu),
+                    popUpContextMenu: menu
+                    withEvent: event
+                    forView: view
+                ];
+            }
+            Ok(())
+        });
     }
 }
 
@@ -2298,6 +2382,23 @@ impl WindowView {
         }
     }
 
+    extern "C" fn wezterm_context_menu_action(
+        this: &mut Object,
+        _sel: Sel,
+        menu_item: *mut Object,
+    ) {
+        let tag: NSInteger = unsafe { msg_send![menu_item, tag] };
+        log::debug!("wezterm_context_menu_action tag={}", tag);
+        if let Some(this) = Self::get_this(this) {
+            this.inner
+                .borrow_mut()
+                .events
+                .dispatch(WindowEvent::Notification(Box::new(
+                    ContextMenuNotification(tag as usize),
+                )));
+        }
+    }
+
     extern "C" fn window_will_close(this: &mut Object, _sel: Sel, _id: id) {
         if let Some(this) = Self::get_this(this) {
             // Advise the window of its impending death
@@ -3203,6 +3304,12 @@ impl WindowView {
             cls.add_method(
                 sel!(weztermPerformKeyAssignment:),
                 Self::wezterm_perform_key_assignment
+                    as extern "C" fn(&mut Object, Sel, *mut Object),
+            );
+
+            cls.add_method(
+                sel!(weztermContextMenuAction:),
+                Self::wezterm_context_menu_action
                     as extern "C" fn(&mut Object, Sel, *mut Object),
             );
 

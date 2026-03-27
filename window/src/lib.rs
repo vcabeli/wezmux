@@ -349,6 +349,34 @@ pub trait WindowOps {
     ) -> anyhow::Result<Option<os::parameters::Parameters>> {
         Ok(None)
     }
+
+    /// Show a native context menu at the given window coordinates.
+    /// Each item is (label, tag). Separators use an empty label.
+    /// When the user picks an item, a TermWindowNotif::Apply is sent
+    /// with the chosen tag. If dismissed, nothing is sent.
+    fn show_context_menu(&self, _items: Vec<ContextMenuItem>, _coords: ScreenPoint) {}
+}
+
+/// Notification sent when a native context menu item is selected.
+/// The usize is the tag of the selected item.
+#[derive(Clone, Debug)]
+pub struct ContextMenuNotification(pub usize);
+
+/// A single item in a native context menu.
+#[derive(Clone, Debug)]
+pub enum ContextMenuItem {
+    /// A clickable menu item with label and an opaque tag.
+    Entry {
+        label: String,
+        tag: usize,
+    },
+    /// A separator line.
+    Separator,
+    /// A submenu with label and child items.
+    SubMenu {
+        label: String,
+        items: Vec<ContextMenuItem>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]

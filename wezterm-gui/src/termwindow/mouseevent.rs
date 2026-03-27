@@ -76,7 +76,8 @@ impl super::TermWindow {
             | UIItemType::SidebarSplitVertical
             | UIItemType::SidebarSettings
             | UIItemType::SidebarResizeHandle
-            | UIItemType::SidebarBackground => {
+            | UIItemType::SidebarBackground
+            => {
                 self.sidebar.hovered_workspace = None;
             }
             UIItemType::CloseTab(_)
@@ -533,16 +534,22 @@ impl super::TermWindow {
         event: MouseEvent,
         context: &dyn WindowOps,
     ) {
-        if matches!(event.kind, WMEK::Press(MousePress::Left)) {
-            front_end().switch_workspace(&workspace);
+        match event.kind {
+            WMEK::Press(MousePress::Left) => {
+                front_end().switch_workspace(&workspace);
 
-            let mux = Mux::get();
-            mux.mark_workspace_notifications_read(&workspace);
+                let mux = Mux::get();
+                mux.mark_workspace_notifications_read(&workspace);
 
-            // Force sidebar cache rebuild so badge clears immediately
-            self.sidebar.invalidate_cache();
+                // Force sidebar cache rebuild so badge clears immediately
+                self.sidebar.invalidate_cache();
 
-            context.invalidate();
+                context.invalidate();
+            }
+            WMEK::Press(MousePress::Right) => {
+                self.show_workspace_context_menu(workspace, event, context);
+            }
+            _ => {}
         }
         context.set_cursor(Some(MouseCursor::Hand));
     }
@@ -562,27 +569,93 @@ impl super::TermWindow {
         context: &dyn WindowOps,
     ) {
         if matches!(event.kind, WMEK::Press(MousePress::Left)) {
-            let mux = Mux::get();
-            // Don't close the active workspace — switch away first
-            if mux.active_workspace() == workspace {
-                // Just switch to another workspace if available
-                let workspaces = mux.iter_workspaces();
-                if let Some(other) = workspaces.iter().find(|w| w.as_str() != workspace) {
-                    front_end().switch_workspace(other);
-                }
-                // If it's the only workspace, don't close it
-                if mux.iter_workspaces().len() <= 1 {
-                    return;
-                }
-            }
-            // Now safe to close
-            let window_ids: Vec<_> = mux.iter_windows_in_workspace(&workspace);
-            for window_id in window_ids {
-                mux.kill_window(window_id);
-            }
+            self.close_workspace(&workspace);
             context.invalidate();
         }
         context.set_cursor(Some(MouseCursor::Hand));
+    }
+
+    /// Close a workspace by killing all its windows.
+    /// Switches away first if it's the active workspace.
+    /// Cleans up persisted customizations so new workspaces don't inherit stale colors.
+    fn close_workspace(&mut self, workspace: &str) {
+        let mux = Mux::get();
+        if mux.active_workspace() == workspace {
+            // Switch to the next workspace in display order
+            let ordered = self.ordered_workspaces();
+            let idx = ordered.iter().position(|w| w == workspace).unwrap_or(0);
+            let next = if idx + 1 < ordered.len() {
+                Some(ordered[idx + 1].clone())
+            } else if idx > 0 {
+                Some(ordered[idx - 1].clone())
+            } else {
+                None
+            };
+            match next {
+                Some(ref next_ws) => front_end().switch_workspace(next_ws),
+                None => return, // Only workspace, don't close
+            }
+        }
+        let window_ids: Vec<_> = mux.iter_windows_in_workspace(workspace);
+        for window_id in window_ids {
+            mux.kill_window(window_id);
+        }
+        self.sidebar.workspace_configs.remove_workspace(workspace);
+        if let Err(e) = self.sidebar.workspace_configs.save() {
+            log::error!("Failed to save workspace configs: {:#}", e);
+        }
+    }
+
+    fn show_workspace_context_menu(
+        &mut self,
+        workspace: String,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        use ::window::ContextMenuItem as NativeItem;
+
+        // Tag layout: 0-99 = actions, 100+ = color swatches
+        const TAG_MOVE_UP: usize = 2;
+        const TAG_MOVE_DOWN: usize = 3;
+        const TAG_MOVE_TO_TOP: usize = 4;
+        const TAG_MOVE_TO_BOTTOM: usize = 5;
+        const TAG_CLOSE: usize = 6;
+        const TAG_COLOR_RESET: usize = 100;
+        // 101-108 = color swatches in order
+
+        let color_items: Vec<NativeItem> = {
+            let mut items = vec![
+                NativeItem::Entry { label: "Reset to Default".into(), tag: TAG_COLOR_RESET },
+                NativeItem::Separator,
+            ];
+            let swatches = [
+                ("Red", 101), ("Orange", 102), ("Yellow", 103), ("Green", 104),
+                ("Cyan", 105), ("Blue", 106), ("Purple", 107), ("Pink", 108),
+            ];
+            for (name, tag) in swatches {
+                items.push(NativeItem::Entry { label: name.into(), tag });
+            }
+            items
+        };
+
+        let menu_items = vec![
+            NativeItem::SubMenu { label: "Workspace Color".into(), items: color_items },
+            NativeItem::Separator,
+            NativeItem::Entry { label: "Move Up".into(), tag: TAG_MOVE_UP },
+            NativeItem::Entry { label: "Move Down".into(), tag: TAG_MOVE_DOWN },
+            NativeItem::Entry { label: "Move to Top".into(), tag: TAG_MOVE_TO_TOP },
+            NativeItem::Entry { label: "Move to Bottom".into(), tag: TAG_MOVE_TO_BOTTOM },
+            NativeItem::Separator,
+            NativeItem::Entry { label: "Close Workspace".into(), tag: TAG_CLOSE },
+        ];
+
+        // Store which workspace this menu is for, so the notification handler can use it
+        self.sidebar.context_menu_workspace = Some(workspace);
+
+        context.show_context_menu(
+            menu_items,
+            ::window::ScreenPoint::new(event.coords.x, event.coords.y),
+        );
     }
 
     fn do_new_tab_button_click(&mut self, button: MousePress) {
