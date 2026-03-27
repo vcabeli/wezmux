@@ -91,7 +91,7 @@ fn sidebar_pull_request_closed() -> LinearRgba {
     LinearRgba::with_srgba(215, 106, 106, 255)
 }
 
-fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarLine> {
+fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usize) -> Vec<SidebarLine> {
     let mut lines = vec![];
 
     // Agent status with message, falling back to notification text
@@ -136,26 +136,26 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize) -> Vec<SidebarL
         if let Some(path) = sidebar_entry_path(entry) {
             let meta = format!("{branch_text} \u{2022} {path}");
             lines.push(SidebarLine {
-                text: truncate_to_cells(&meta, cols),
+                text: truncate_to_cells(&meta, mono_cols),
                 style: SidebarLineStyle::Meta,
             });
         } else {
             lines.push(SidebarLine {
-                text: truncate_to_cells(&branch_text, cols),
+                text: truncate_to_cells(&branch_text, mono_cols),
                 style: SidebarLineStyle::Meta,
             });
         }
     } else if let Some(path) = sidebar_entry_path(entry) {
         // No git branch — just show path
         lines.push(SidebarLine {
-            text: truncate_to_cells(&path, cols),
+            text: truncate_to_cells(&path, mono_cols),
             style: SidebarLineStyle::Meta,
         });
     }
 
     // PR info
     if let Some(mut pull_request) = sidebar_entry_pull_request(entry) {
-        pull_request.text = truncate_to_cells(&pull_request.text, cols);
+        pull_request.text = truncate_to_cells(&pull_request.text, mono_cols);
         lines.push(pull_request);
     }
 
@@ -313,6 +313,7 @@ fn build_card_element(
     mono_font: &Rc<LoadedFont>,
     entry: &WorkspaceEntry,
     text_cols: usize,
+    mono_cols: usize,
     card_width: f32,
 ) -> Element {
     let is_active = entry.is_active;
@@ -380,7 +381,7 @@ fn build_card_element(
     );
 
     // Body lines — use body_font for preview/status, mono_font for meta/path
-    let body_lines = sidebar_entry_body_lines(entry, text_cols);
+    let body_lines = sidebar_entry_body_lines(entry, text_cols, mono_cols);
     for line in &body_lines {
         let (line_font, fg) = match line.style {
             SidebarLineStyle::Preview => {
@@ -530,10 +531,10 @@ impl crate::TermWindow {
             item_type: UIItemType::SidebarResizeHandle,
         });
 
-        // Title: bold Roboto 12pt. Body/meta: regular Roboto 11pt (1pt smaller).
+        // Title: bold Roboto 12pt. Body: regular Roboto 11pt. Meta: terminal mono font 10pt.
         let font = self.fonts.title_font()?;
         let body_font = self.fonts.sidebar_body_font()?;
-        let mono_font = Rc::clone(&body_font);
+        let mono_font = self.fonts.sidebar_meta_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         // Available text width inside cards:
         // sidebar - handle - card margin (6+6) - card padding (12+12) - border (3)
@@ -545,6 +546,9 @@ impl crate::TermWindow {
         let body_metrics = RenderMetrics::with_font_metrics(&body_font.metrics());
         let avg_char_width = body_metrics.cell_size.width as f32 * 0.55;
         let text_cols = (text_width / avg_char_width).floor().max(1.0) as usize;
+        // Mono font has fixed-width characters — use cell_size directly
+        let mono_metrics = RenderMetrics::with_font_metrics(&mono_font.metrics());
+        let mono_cols = (text_width / mono_metrics.cell_size.width as f32).floor().max(1.0) as usize;
 
         // Build Element tree
         let mut root_children: Vec<Element> = vec![];
@@ -609,7 +613,7 @@ impl crate::TermWindow {
         // Workspace cards
         let entries = self.sidebar_entries();
         for entry in &entries {
-            root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, content_width));
+            root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, mono_cols, content_width));
         }
 
         // Reserve space at the bottom for the fixed "New workspace" button
@@ -887,7 +891,7 @@ mod test {
         };
 
         assert_eq!(
-            sidebar_entry_body_lines(&entry, 28),
+            sidebar_entry_body_lines(&entry, 28, 28),
             vec![
                 SidebarLine {
                     text: "Confirms it the file in the".to_string(),

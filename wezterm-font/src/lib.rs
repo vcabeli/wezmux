@@ -631,10 +631,10 @@ impl FontConfigInner {
                 let title_size = config.window_frame.font_size.unwrap_or(sys_size);
                 (title_size - 1.0, None)
             }
-            // Sidebar meta: regular weight, smaller for paths/metadata
+            // Sidebar meta: use terminal monospace font for branch/path
             Entity::SidebarMeta => {
                 let title_size = config.window_frame.font_size.unwrap_or(sys_size);
-                (title_size - 2.0, None)
+                (title_size - 2.0, Some(&config.font))
             }
         };
 

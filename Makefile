@@ -32,6 +32,7 @@ servedocs:
 
 install:
 	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+	rm -rf $(APP_DIR)
 	mkdir -p $(APP_DIR)/Contents/MacOS
 	mkdir -p $(APP_DIR)/Contents/Resources
 	cp assets/macos/WezTerm.app/Contents/Info.plist $(APP_DIR)/Contents/Info.plist
@@ -39,10 +40,9 @@ install:
 	cp target/release/wezterm $(APP_DIR)/Contents/MacOS/wezterm
 	cp target/release/wezterm-mux-server $(APP_DIR)/Contents/MacOS/wezterm-mux-server
 	cp target/release/strip-ansi-escapes $(APP_DIR)/Contents/MacOS/strip-ansi-escapes
-	cp target/release/wezterm-gui /tmp/wezterm-gui
-	codesign --force --sign - /tmp/wezterm-gui
-	cp /tmp/wezterm-gui $(APP_DIR)/Contents/MacOS/wezterm-gui
-	rm /tmp/wezterm-gui
+	cp target/release/wezterm-gui $(APP_DIR)/Contents/MacOS/wezterm-gui
+	codesign --force --deep --sign - $(APP_DIR)
+	xattr -cr $(APP_DIR)
 	@echo "Wezmux.app installed to $(APP_DIR)"
 
 bundle:
