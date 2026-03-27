@@ -1009,9 +1009,13 @@ impl Config {
         // multiple.  In addition, it spawns a lot of subprocesses,
         // so we do this bit "by-hand"
 
-        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".wezterm.lua"))];
+        let mut paths = vec![
+            PathPossibility::optional(HOME_DIR.join(".wezmux.lua")),
+            PathPossibility::optional(HOME_DIR.join(".wezterm.lua")),
+        ];
         for dir in CONFIG_DIRS.iter() {
-            paths.push(PathPossibility::optional(dir.join("wezterm.lua")))
+            paths.push(PathPossibility::optional(dir.join("wezmux.lua")));
+            paths.push(PathPossibility::optional(dir.join("wezterm.lua")));
         }
 
         if cfg!(windows) {
@@ -1031,6 +1035,10 @@ impl Config {
         }
         if let Some(path) = std::env::var_os("WEZTERM_CONFIG_FILE") {
             log::trace!("Note: WEZTERM_CONFIG_FILE is set in the environment");
+            paths.insert(0, PathPossibility::optional(path.into()));
+        }
+        if let Some(path) = std::env::var_os("WEZMUX_CONFIG_FILE") {
+            log::trace!("Note: WEZMUX_CONFIG_FILE is set in the environment");
             paths.insert(0, PathPossibility::required(path.into()));
         }
 
@@ -1076,15 +1084,28 @@ impl Config {
     }
 
     pub fn try_default() -> anyhow::Result<LoadedConfig> {
+        static DEFAULT_CONFIG_LUA: &str = include_str!("default_config.lua");
+
+        let lua = make_lua_context(Path::new("builtin:default_config.lua"))?;
+
         let (config, warnings) =
             wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
-                Ok(default_config_with_overrides_applied()?.compute_extra_defaults(None))
+                let config: mlua::Value = smol::block_on(
+                    lua.load(DEFAULT_CONFIG_LUA)
+                        .set_name("builtin:default_config.lua")
+                        .eval_async(),
+                )?;
+                let config = Config::apply_overrides_to(&lua, config)?;
+                let cfg = Config::from_lua(config, &lua).with_context(|| {
+                    "Error converting builtin default config to Config struct"
+                })?;
+                Ok(cfg.compute_extra_defaults(None))
             });
 
         Ok(LoadedConfig {
             config: Ok(config?),
             file_name: None,
-            lua: Some(make_lua_context(Path::new(""))?),
+            lua: Some(lua),
             warnings,
         })
     }
@@ -1961,6 +1982,87 @@ fn default_sidebar_width() -> Dimension {
     Dimension::Pixels(280.)
 }
 
+fn default_sidebar_bg() -> RgbaColor {
+    (58u8, 58u8, 65u8).into()
+}
+
+fn default_sidebar_card_bg() -> RgbaColor {
+    (48u8, 48u8, 54u8).into()
+}
+
+fn default_sidebar_card_hover() -> RgbaColor {
+    (68u8, 68u8, 75u8).into()
+}
+
+fn default_sidebar_accent() -> RgbaColor {
+    (0u8, 145u8, 255u8).into()
+}
+
+fn default_sidebar_text() -> RgbaColor {
+    SrgbaTuple(1.0, 1.0, 1.0, 0.9).into()
+}
+
+fn default_sidebar_muted() -> RgbaColor {
+    SrgbaTuple(1.0, 1.0, 1.0, 0.55).into()
+}
+
+fn default_sidebar_separator() -> RgbaColor {
+    SrgbaTuple(1.0, 1.0, 1.0, 0.1).into()
+}
+
+fn default_sidebar_pr_open() -> RgbaColor {
+    (184u8, 96u8, 255u8).into()
+}
+
+fn default_sidebar_pr_merged() -> RgbaColor {
+    (76u8, 197u8, 124u8).into()
+}
+
+fn default_sidebar_pr_closed() -> RgbaColor {
+    (215u8, 106u8, 106u8).into()
+}
+
+#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]
+pub struct SidebarColors {
+    #[dynamic(default = "default_sidebar_bg")]
+    pub bg: RgbaColor,
+    #[dynamic(default = "default_sidebar_card_bg")]
+    pub card_bg: RgbaColor,
+    #[dynamic(default = "default_sidebar_card_hover")]
+    pub card_hover: RgbaColor,
+    #[dynamic(default = "default_sidebar_accent")]
+    pub accent: RgbaColor,
+    #[dynamic(default = "default_sidebar_text")]
+    pub text: RgbaColor,
+    #[dynamic(default = "default_sidebar_muted")]
+    pub muted: RgbaColor,
+    #[dynamic(default = "default_sidebar_separator")]
+    pub separator: RgbaColor,
+    #[dynamic(default = "default_sidebar_pr_open")]
+    pub pr_open: RgbaColor,
+    #[dynamic(default = "default_sidebar_pr_merged")]
+    pub pr_merged: RgbaColor,
+    #[dynamic(default = "default_sidebar_pr_closed")]
+    pub pr_closed: RgbaColor,
+}
+
+impl Default for SidebarColors {
+    fn default() -> Self {
+        Self {
+            bg: default_sidebar_bg(),
+            card_bg: default_sidebar_card_bg(),
+            card_hover: default_sidebar_card_hover(),
+            accent: default_sidebar_accent(),
+            text: default_sidebar_text(),
+            muted: default_sidebar_muted(),
+            separator: default_sidebar_separator(),
+            pr_open: default_sidebar_pr_open(),
+            pr_merged: default_sidebar_pr_merged(),
+            pr_closed: default_sidebar_pr_closed(),
+        }
+    }
+}
+
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]
 pub struct Sidebar {
     #[dynamic(default = "default_true")]
@@ -1970,6 +2072,8 @@ pub struct Sidebar {
         default = "default_sidebar_width"
     )]
     pub width: Dimension,
+    #[dynamic(default)]
+    pub colors: SidebarColors,
 }
 
 impl Default for Sidebar {
@@ -1977,6 +2081,7 @@ impl Default for Sidebar {
         Self {
             visible: true,
             width: default_sidebar_width(),
+            colors: SidebarColors::default(),
         }
     }
 }

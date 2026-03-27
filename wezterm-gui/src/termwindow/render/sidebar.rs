@@ -27,68 +27,44 @@ struct SidebarLine {
     style: SidebarLineStyle,
 }
 
-// Sidebar bg: lighter gray
-fn sidebar_bg() -> LinearRgba {
-    LinearRgba::with_srgba(58, 58, 65, 255)
+/// Resolved sidebar colors, built once per frame from config.
+struct SidebarTheme {
+    bg: LinearRgba,
+    card_bg: LinearRgba,
+    card_hover: LinearRgba,
+    card_active: LinearRgba,
+    text: LinearRgba,
+    muted: LinearRgba,
+    active_text: LinearRgba,
+    active_muted: LinearRgba,
+    active_secondary: LinearRgba,
+    separator: LinearRgba,
+    accent: LinearRgba,
+    pr_open: LinearRgba,
+    pr_merged: LinearRgba,
+    pr_closed: LinearRgba,
 }
 
-// Inactive cards: slightly darker than sidebar
-fn sidebar_card_bg() -> LinearRgba {
-    LinearRgba::with_srgba(48, 48, 54, 255)
-}
-
-// Hover: brighter
-fn sidebar_card_hover() -> LinearRgba {
-    LinearRgba::with_srgba(68, 68, 75, 255)
-}
-
-// Active card: cmux accent blue #0091FF
-fn sidebar_card_active() -> LinearRgba {
-    LinearRgba::with_srgba(0, 145, 255, 255)
-}
-
-// Primary text (inactive)
-fn sidebar_text() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 230)
-}
-
-// Secondary text (inactive) -- maps to .secondary
-fn sidebar_muted() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 140)
-}
-
-// Active card: white text at various opacities
-fn sidebar_active_text() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 255)
-}
-
-fn sidebar_active_muted() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 191)
-}
-
-fn sidebar_active_secondary() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 148)
-}
-
-fn sidebar_separator() -> LinearRgba {
-    LinearRgba::with_srgba(255, 255, 255, 25)
-}
-
-// cmux accent blue #0091FF
-fn sidebar_accent() -> LinearRgba {
-    LinearRgba::with_srgba(0, 145, 255, 255)
-}
-
-fn sidebar_pull_request_open() -> LinearRgba {
-    LinearRgba::with_srgba(184, 96, 255, 255)
-}
-
-fn sidebar_pull_request_merged() -> LinearRgba {
-    LinearRgba::with_srgba(76, 197, 124, 255)
-}
-
-fn sidebar_pull_request_closed() -> LinearRgba {
-    LinearRgba::with_srgba(215, 106, 106, 255)
+impl SidebarTheme {
+    fn from_config(colors: &config::SidebarColors) -> Self {
+        Self {
+            bg: colors.bg.to_linear(),
+            card_bg: colors.card_bg.to_linear(),
+            card_hover: colors.card_hover.to_linear(),
+            card_active: colors.accent.to_linear(),
+            text: colors.text.to_linear(),
+            muted: colors.muted.to_linear(),
+            // Active card: white text at full/partial opacity
+            active_text: LinearRgba::with_srgba(255, 255, 255, 255),
+            active_muted: LinearRgba::with_srgba(255, 255, 255, 191),
+            active_secondary: LinearRgba::with_srgba(255, 255, 255, 148),
+            separator: colors.separator.to_linear(),
+            accent: colors.accent.to_linear(),
+            pr_open: colors.pr_open.to_linear(),
+            pr_merged: colors.pr_merged.to_linear(),
+            pr_closed: colors.pr_closed.to_linear(),
+        }
+    }
 }
 
 fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usize) -> Vec<SidebarLine> {
@@ -189,21 +165,21 @@ fn agent_status_label(status: AgentStatus) -> &'static str {
     }
 }
 
-fn sidebar_status_color(status: AgentStatus, is_active: bool) -> LinearRgba {
+fn sidebar_status_color(status: AgentStatus, is_active: bool, theme: &SidebarTheme) -> LinearRgba {
     if is_active {
-        // On blue active card, use white at varying opacity
+        // On active card, use white at varying opacity
         return match status {
             AgentStatus::NeedsInput => LinearRgba::with_srgba(255, 255, 255, 204),
             AgentStatus::Idle => LinearRgba::with_srgba(255, 255, 255, 204),
             AgentStatus::Working => LinearRgba::with_srgba(255, 255, 255, 204),
-            AgentStatus::Unknown => sidebar_active_muted(),
+            AgentStatus::Unknown => theme.active_muted,
         };
     }
     match status {
-        AgentStatus::NeedsInput => LinearRgba::with_srgba(0, 145, 255, 255),
+        AgentStatus::NeedsInput => theme.accent,
         AgentStatus::Idle => LinearRgba::with_srgba(76, 197, 124, 255),
         AgentStatus::Working => LinearRgba::with_srgba(253, 151, 31, 255),
-        AgentStatus::Unknown => sidebar_muted(),
+        AgentStatus::Unknown => theme.muted,
     }
 }
 
@@ -315,17 +291,18 @@ fn build_card_element(
     text_cols: usize,
     mono_cols: usize,
     card_width: f32,
+    theme: &SidebarTheme,
 ) -> Element {
     let is_active = entry.is_active;
     let card_bg = if is_active {
-        sidebar_card_active()
+        theme.card_active
     } else {
-        sidebar_card_bg()
+        theme.card_bg
     };
     let title_color = if is_active {
-        sidebar_active_text()
+        theme.active_text
     } else {
-        sidebar_text()
+        theme.text
     };
 
     let mut card_children: Vec<Element> = vec![];
@@ -347,7 +324,7 @@ fn build_card_element(
         let badge_bg = if is_active {
             LinearRgba::with_srgba(255, 255, 255, 64)
         } else {
-            sidebar_accent()
+            theme.accent
         };
         title_parts.push(
             Element::new(font, ElementContent::Text(format!(" {} ", count_text)))
@@ -386,25 +363,25 @@ fn build_card_element(
         let (line_font, fg) = match line.style {
             SidebarLineStyle::Preview => {
                 let fg = if is_active {
-                    sidebar_active_muted()
+                    theme.active_muted
                 } else {
-                    sidebar_muted()
+                    theme.muted
                 };
                 (body_font, fg)
             }
             SidebarLineStyle::Meta | SidebarLineStyle::Secondary => {
                 let fg = if is_active {
-                    sidebar_active_secondary()
+                    theme.active_secondary
                 } else {
-                    sidebar_muted()
+                    theme.muted
                 };
                 (mono_font, fg)
             }
             SidebarLineStyle::PullRequest(status) => {
-                (mono_font, sidebar_pull_request_color(status, is_active))
+                (mono_font, sidebar_pull_request_color(status, is_active, theme))
             }
             SidebarLineStyle::StatusIndicator(status) => {
-                (body_font, sidebar_status_color(status, is_active))
+                (body_font, sidebar_status_color(status, is_active, theme))
             }
         };
         card_children.push(
@@ -422,7 +399,7 @@ fn build_card_element(
     let hover_colors = if !is_active {
         Some(ElementColors {
             border: BorderColor::default(),
-            bg: sidebar_card_hover().into(),
+            bg: theme.card_hover.into(),
             text: InheritableColor::Inherited,
         })
     } else {
@@ -432,10 +409,10 @@ fn build_card_element(
     // card_width minus margin (6+6=12) to get inner width
     let inner_width = (card_width - 12.0).max(1.0);
 
-    // Left accent bar: 3px blue on active, transparent on inactive
+    // Left accent bar: 3px accent on active, transparent on inactive
     let border_color = if is_active {
         BorderColor {
-            left: sidebar_accent(),
+            left: theme.accent,
             top: LinearRgba::TRANSPARENT,
             right: LinearRgba::TRANSPARENT,
             bottom: LinearRgba::TRANSPARENT,
@@ -500,13 +477,14 @@ impl crate::TermWindow {
         }
 
         let handle_width = 6.0_f32;
+        let theme = SidebarTheme::from_config(&self.config.sidebar.colors);
 
         // Background fill (layer 0)
         self.filled_rectangle(
             layers,
             0,
             euclid::rect(sidebar_x, sidebar_y, sidebar_width, sidebar_height),
-            sidebar_bg(),
+            theme.bg,
         )?;
 
         // Right edge separator (layer 2)
@@ -519,7 +497,7 @@ impl crate::TermWindow {
                 1.0,
                 sidebar_height,
             ),
-            sidebar_separator(),
+            theme.separator,
         )?;
 
         // Resize handle hit region
@@ -563,12 +541,12 @@ impl crate::TermWindow {
                 .colors(ElementColors {
                     border: BorderColor::default(),
                     bg: InheritableColor::Inherited,
-                    text: sidebar_muted().into(),
+                    text: theme.muted.into(),
                 })
                 .hover_colors(Some(ElementColors {
                     border: BorderColor::default(),
                     bg: LinearRgba::with_srgba(255, 255, 255, 25).into(),
-                    text: sidebar_text().into(),
+                    text: theme.text.into(),
                 }))
                 .padding(BoxDimension {
                     left: Dimension::Pixels(6.),
@@ -601,7 +579,7 @@ impl crate::TermWindow {
                 .colors(ElementColors {
                     border: BorderColor {
                         top: LinearRgba::TRANSPARENT,
-                        bottom: sidebar_separator(),
+                        bottom: theme.separator,
                         left: LinearRgba::TRANSPARENT,
                         right: LinearRgba::TRANSPARENT,
                     },
@@ -613,7 +591,7 @@ impl crate::TermWindow {
         // Workspace cards
         let entries = self.sidebar_entries();
         for entry in &entries {
-            root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, mono_cols, content_width));
+            root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, mono_cols, content_width, &theme));
         }
 
         // Reserve space at the bottom for the fixed "New workspace" button
@@ -626,8 +604,8 @@ impl crate::TermWindow {
             .min_height(Some(Dimension::Pixels(scrollable_height)))
             .colors(ElementColors {
                 border: BorderColor::default(),
-                bg: sidebar_bg().into(),
-                text: sidebar_text().into(),
+                bg: theme.bg.into(),
+                text: theme.text.into(),
             });
 
         let gl_state = self.render_state.as_ref().unwrap();
@@ -683,12 +661,12 @@ impl crate::TermWindow {
             .colors(ElementColors {
                 border: BorderColor::default(),
                 bg: InheritableColor::Inherited,
-                text: sidebar_muted().into(),
+                text: theme.muted.into(),
             })
             .hover_colors(Some(ElementColors {
                 border: BorderColor::default(),
                 bg: InheritableColor::Inherited,
-                text: sidebar_text().into(),
+                text: theme.text.into(),
             }))
             .item_type(UIItemType::SidebarNewWorkspace);
 
@@ -709,17 +687,17 @@ impl crate::TermWindow {
             })
             .colors(ElementColors {
                 border: BorderColor {
-                    top: sidebar_separator(),
+                    top: theme.separator,
                     bottom: LinearRgba::TRANSPARENT,
                     left: LinearRgba::TRANSPARENT,
                     right: LinearRgba::TRANSPARENT,
                 },
-                bg: sidebar_bg().into(),
+                bg: theme.bg.into(),
                 text: InheritableColor::Inherited,
             })
             .hover_colors(Some(ElementColors {
                 border: BorderColor {
-                    top: sidebar_separator(),
+                    top: theme.separator,
                     bottom: LinearRgba::TRANSPARENT,
                     left: LinearRgba::TRANSPARENT,
                     right: LinearRgba::TRANSPARENT,
@@ -825,16 +803,14 @@ fn wrap_text_to_cells(text: &str, cols: usize, max_lines: usize) -> Vec<String> 
     visible
 }
 
-fn sidebar_pull_request_color(status: WorkspacePullRequestStatus, is_active: bool) -> LinearRgba {
+fn sidebar_pull_request_color(status: WorkspacePullRequestStatus, is_active: bool, theme: &SidebarTheme) -> LinearRgba {
     if is_active {
-        // cmux: white at 75% opacity on active card
-        return LinearRgba::with_srgba(255, 255, 255, 191);
+        return theme.active_muted;
     }
-    // cmux: .secondary color for inactive
     match status {
-        WorkspacePullRequestStatus::Open => sidebar_pull_request_open(),
-        WorkspacePullRequestStatus::Merged => sidebar_pull_request_merged(),
-        WorkspacePullRequestStatus::Closed => sidebar_pull_request_closed(),
+        WorkspacePullRequestStatus::Open => theme.pr_open,
+        WorkspacePullRequestStatus::Merged => theme.pr_merged,
+        WorkspacePullRequestStatus::Closed => theme.pr_closed,
     }
 }
 
