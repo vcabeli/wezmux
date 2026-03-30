@@ -5,7 +5,7 @@ use crate::termwindow::render::corners::{
     TOP_RIGHT_ROUNDED_CORNER,
 };
 use crate::termwindow::sidebar::{
-    AgentStatus, WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
+    AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
 };
 use crate::termwindow::{UIItem, UIItemType};
 use crate::utilsprites::RenderMetrics;
@@ -108,9 +108,9 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usiz
     // Git branch line (always show separately when available)
     if let Some(branch) = entry.git_branch.as_ref() {
         let branch_text = if entry.git_dirty {
-            format!("{branch}*")
+            format!("\u{e0a0} {branch}*")  // nf-pl-branch (powerline)
         } else {
-            branch.clone()
+            format!("\u{e0a0} {branch}")
         };
         // Combine with path using separator
         if let Some(path) = sidebar_entry_path(entry) {
@@ -153,10 +153,46 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usiz
 
 fn agent_status_symbol(status: AgentStatus) -> &'static str {
     match status {
-        AgentStatus::NeedsInput => "\u{25B2}",
-        AgentStatus::Idle => "\u{25CF}",
-        AgentStatus::Working => "\u{25B6}",
+        AgentStatus::NeedsInput => "\u{f0590}",  // nf-md-message_alert_outline
+        AgentStatus::Idle => "\u{f023a}",         // nf-md-check_circle_outline
+        AgentStatus::Working => "\u{f1354}",      // nf-md-progress_wrench
         AgentStatus::Unknown => "\u{25CB}",
+    }
+}
+
+fn agent_type_icon(agent_type: AgentType) -> &'static str {
+    match agent_type {
+        AgentType::ClaudeCode => "\u{2733}",   // ✳ eight spoked asterisk (matches Claude Code's own tab icon)
+        AgentType::Codex => "\u{2731}",        // ✱ heavy asterisk
+        AgentType::Cursor => "\u{2731}",      // ✱ heavy asterisk
+        AgentType::Aider => "\u{2731}",       // ✱ heavy asterisk
+        AgentType::OpenCode => "\u{2731}",    // ✱ heavy asterisk
+    }
+}
+
+/// Returns a nerd font icon for common foreground processes.
+fn process_icon(process_name: &str) -> Option<&'static str> {
+    let lower = process_name.to_lowercase();
+    match lower.as_str() {
+        "nvim" | "neovim" => Some("\u{e62b}"),       // nf-custom-vim
+        "vim" | "vi" => Some("\u{e62b}"),             // nf-custom-vim
+        "node" | "nodejs" => Some("\u{e718}"),        // nf-dev-nodejs_small
+        "python" | "python3" => Some("\u{e73c}"),     // nf-dev-python
+        "ruby" | "irb" => Some("\u{e739}"),           // nf-dev-ruby
+        "go" => Some("\u{e627}"),                     // nf-dev-go
+        "cargo" | "rustc" => Some("\u{e7a8}"),        // nf-dev-rust
+        "docker" => Some("\u{e7b0}"),                 // nf-dev-docker
+        "lua" | "luajit" => Some("\u{e620}"),         // nf-custom-lua
+        "java" | "javac" => Some("\u{e738}"),         // nf-dev-java
+        "swift" => Some("\u{e755}"),                  // nf-dev-swift
+        "make" | "cmake" | "ninja" => Some("\u{f0ad}"), // nf-fa-wrench
+        "htop" | "btop" | "top" => Some("\u{f080}"),  // nf-fa-bar_chart
+        "ssh" => Some("\u{f489}"),                    // nf-oct-terminal
+        "tmux" | "zellij" => Some("\u{ebc8}"),           // nf-cod-split_horizontal
+        "git" => Some("\u{e702}"),                    // nf-dev-git
+        "npm" | "yarn" | "pnpm" | "bun" => Some("\u{e71e}"), // nf-dev-npm
+        "psql" | "mysql" | "sqlite3" => Some("\u{f1c0}"), // nf-fa-database
+        _ => None,
     }
 }
 
@@ -269,10 +305,11 @@ fn format_listening_ports(ports: &[u16]) -> Option<String> {
         .map(|p| format!(":{p}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let port_icon = "\u{f0ac}"; // nf-fa-globe
     if ports.len() > 3 {
-        Some(format!("{visible} +{}", ports.len() - 3))
+        Some(format!("{port_icon} {visible} +{}", ports.len() - 3))
     } else {
-        Some(visible)
+        Some(format!("{port_icon} {visible}"))
     }
 }
 
@@ -321,9 +358,11 @@ fn build_card_element(
 
     let mut card_children: Vec<Element> = vec![];
 
-    // Title line (with optional unread badge prefix and agent icon)
+    // Title line (with optional unread badge prefix and nerd font icon)
     let title_text = if let Some(ref agent) = entry.agent {
-        format!("\u{2731} {}", agent.display_name)
+        format!("{} {}", agent_type_icon(agent.agent_type), agent.display_name)
+    } else if let Some(icon) = entry.foreground_process_name.as_deref().and_then(process_icon) {
+        format!("{} {}", icon, entry.title)
     } else {
         entry.title.clone()
     };

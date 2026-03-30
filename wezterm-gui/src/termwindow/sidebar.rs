@@ -213,6 +213,8 @@ pub struct WorkspaceEntry {
     pub is_active: bool,
     pub is_hovered: bool,
     pub agent: Option<AgentInfo>,
+    /// Foreground process name (e.g. "nvim", "node") for icon display.
+    pub foreground_process_name: Option<String>,
     /// Custom accent color from workspace config (hex string like "#ff6b6b").
     pub accent_color: Option<String>,
 }
@@ -438,6 +440,21 @@ impl crate::TermWindow {
                 let title = if display_title != name { display_title } else { title };
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
 
+                // Extract foreground process name for icon display
+                let foreground_process_name = active_pane_process_info
+                    .as_ref()
+                    .and_then(|info| {
+                        info.flatten_to_exe_names()
+                            .into_iter()
+                            .last()
+                            .map(|name| {
+                                std::path::Path::new(&name)
+                                    .file_name()
+                                    .map(|f| f.to_string_lossy().to_string())
+                                    .unwrap_or(name)
+                            })
+                    });
+
                 WorkspaceEntry {
                     is_active: active_workspace == name,
                     is_hovered: hovered == Some(name.as_str()),
@@ -454,6 +471,7 @@ impl crate::TermWindow {
                     tab_count,
                     pane_count,
                     agent,
+                    foreground_process_name,
                     accent_color,
                 }
             })
