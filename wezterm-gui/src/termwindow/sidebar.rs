@@ -818,22 +818,20 @@ fn build_agent_info(
         // When the agent is idle/needs_input, prefer the last working message
         // (the actual output preview) over the current message (which is often
         // a generic status like "Claude is waiting for your input").
+        let tool_fallback = pane_status.tool.as_ref().map(|t| format!("Running {t}..."));
         let msg = match status {
             AgentStatus::Working => {
-                if pane_status.message.is_some() {
-                    pane_status.message
-                } else {
-                    pane_status.tool.map(|t| format!("Running {t}..."))
-                }
+                pane_status.message
+                    .or(pane_status.last_working_message)
+                    .or(tool_fallback)
             }
             _ => {
-                if pane_status.last_working_message.is_some() {
-                    pane_status.last_working_message
-                } else if pane_status.message.is_some() {
-                    pane_status.message
-                } else {
-                    pane_status.tool.map(|t| format!("Running {t}..."))
-                }
+                // For idle/needs_input, prefer last working message
+                // (actual output) over current message (often a generic
+                // status like "Claude is waiting for your input").
+                pane_status.last_working_message
+                    .or(pane_status.message)
+                    .or(tool_fallback)
             }
         };
         (status, msg)

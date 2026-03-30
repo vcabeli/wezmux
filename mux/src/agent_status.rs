@@ -1,6 +1,6 @@
 use crate::pane::PaneId;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentStatus {
@@ -39,6 +39,16 @@ impl AgentStatusStore {
                 last_working_message: None,
                 updated: Instant::now(),
             });
+        // Guard against the Stop/Notification hook race: when Claude stops
+        // for plan approval, both hooks fire concurrently.  If Notification
+        // sets NeedsInput first and Stop's Idle arrives within a short
+        // window, drop the Idle so the sidebar keeps showing NeedsInput.
+        if matches!(status, AgentStatus::Idle)
+            && matches!(entry.status, AgentStatus::NeedsInput)
+            && entry.updated.elapsed() < Duration::from_secs(3)
+        {
+            return;
+        }
         // When leaving Working, snapshot the current message as the
         // last working output so the sidebar shows it while idle.
         if matches!(entry.status, AgentStatus::Working) && !matches!(status, AgentStatus::Working) {
@@ -46,11 +56,12 @@ impl AgentStatusStore {
                 entry.last_working_message = Some(msg.clone());
             }
         }
-        // When entering Working, clear message context so stale
-        // previews from a previous working session don't persist.
+        // When entering Working, clear the current message so stale
+        // status labels (e.g. "Claude is waiting") don't persist.
+        // Keep last_working_message as a fallback preview until new
+        // output arrives — clearing it causes blank sidebar cards.
         if matches!(status, AgentStatus::Working) && !matches!(entry.status, AgentStatus::Working) {
             entry.message = None;
-            entry.last_working_message = None;
         }
         entry.status = status;
         entry.updated = Instant::now();
@@ -221,7 +232,7 @@ mod test {
     }
 
     #[test]
-    fn working_transition_clears_stale_messages() {
+    fn working_transition_clears_message_keeps_lwm() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
         store.update_message(1, "old output".to_string());
@@ -231,9 +242,13 @@ mod test {
         store.update_status(1, AgentStatus::Working);
 
         let status = store.get(1).unwrap();
-        // Both cleared so stale previews don't persist
+        // message is cleared (stale status label like "Claude finished")
         assert!(status.message.is_none());
-        assert!(status.last_working_message.is_none());
+        // last_working_message is preserved as fallback preview
+        assert_eq!(
+            status.last_working_message.as_deref(),
+            Some("old output")
+        );
     }
 
     #[test]
@@ -247,5 +262,125 @@ mod test {
         // During working, update_message only sets message, not lwm
         assert_eq!(status.message.as_deref(), Some("second output"));
         assert!(status.last_working_message.is_none());
+    }
+
+    #[test]
+    fn message_during_needs_input_preserves_status() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::NeedsInput);
+
+        // A message arrives while NeedsInput — status stays NeedsInput
+        // (the message might be a label like "needs your approval",
+        // not evidence that the agent resumed working)
+        store.update_message(1, "needs your approval".to_string());
+
+        let status = store.get(1).unwrap();
+        assert_eq!(status.status, AgentStatus::NeedsInput);
+        assert_eq!(status.message.as_deref(), Some("needs your approval"));
+    }
+
+    #[test]
+    fn tool_during_needs_input_preserves_status() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_status(1, AgentStatus::NeedsInput);
+
+        // Tool update during NeedsInput doesn't auto-transition
+        store.update_tool(1, "Bash".to_string());
+
+        let status = store.get(1).unwrap();
+        assert_eq!(status.status, AgentStatus::NeedsInput);
+    }
+
+    #[test]
+    fn idle_does_not_overwrite_recent_needs_input() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::NeedsInput);
+
+        // Idle arrives immediately after (racing Stop hook)
+        store.update_status(1, AgentStatus::Idle);
+
+        let status = store.get(1).unwrap();
+        // NeedsInput is preserved — the Idle was a race
+        assert_eq!(status.status, AgentStatus::NeedsInput);
+    }
+
+    #[test]
+    fn working_can_overwrite_needs_input() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::NeedsInput);
+
+        // Working should always override NeedsInput (user answered)
+        store.update_status(1, AgentStatus::Working);
+
+        let status = store.get(1).unwrap();
+        assert_eq!(status.status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn preview_survives_idle_working_cycle() {
+        let mut store = AgentStatusStore::default();
+
+        // Working session produces output
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "Refactoring auth module".to_string());
+
+        // Stop hook: idle + preview message
+        store.update_status(1, AgentStatus::Idle);
+        store.update_message(1, "Claude finished".to_string());
+
+        // User submits new prompt → working
+        store.update_status(1, AgentStatus::Working);
+
+        let status = store.get(1).unwrap();
+        // message is cleared (stale "Claude finished" label)
+        assert!(status.message.is_none());
+        // last_working_message survives as fallback preview
+        assert_eq!(
+            status.last_working_message.as_deref(),
+            Some("Refactoring auth module")
+        );
+    }
+
+    #[test]
+    fn new_message_replaces_stale_lwm() {
+        let mut store = AgentStatusStore::default();
+
+        // First working session
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "old output".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        // New working session — lwm preserved as fallback
+        store.update_status(1, AgentStatus::Working);
+        assert_eq!(
+            store.get(1).unwrap().last_working_message.as_deref(),
+            Some("old output")
+        );
+
+        // New output arrives — lwm should NOT leak into next idle
+        store.update_message(1, "new output".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        let status = store.get(1).unwrap();
+        // lwm is now "new output", not "old output"
+        assert_eq!(
+            status.last_working_message.as_deref(),
+            Some("new output")
+        );
+    }
+
+    #[test]
+    fn message_during_idle_does_not_transition() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "output".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        // Post-idle message should NOT auto-transition to Working
+        store.update_message(1, "generic status".to_string());
+
+        let status = store.get(1).unwrap();
+        assert_eq!(status.status, AgentStatus::Idle);
     }
 }

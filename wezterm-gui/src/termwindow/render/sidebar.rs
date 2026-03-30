@@ -153,9 +153,9 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usiz
 
 fn agent_status_symbol(status: AgentStatus) -> &'static str {
     match status {
-        AgentStatus::NeedsInput => "\u{f0590}",  // nf-md-message_alert_outline
-        AgentStatus::Idle => "\u{f023a}",         // nf-md-check_circle_outline
-        AgentStatus::Working => "\u{f1354}",      // nf-md-progress_wrench
+        AgentStatus::NeedsInput => "\u{25B2}",
+        AgentStatus::Idle => "\u{25CF}",
+        AgentStatus::Working => "\u{25B6}",
         AgentStatus::Unknown => "\u{25CB}",
     }
 }
