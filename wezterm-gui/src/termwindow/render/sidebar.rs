@@ -238,11 +238,25 @@ fn sidebar_notification_preview(entry: &WorkspaceEntry) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" ");
         if collapsed.is_empty() {
-            None
-        } else {
-            Some(collapsed)
+            return None;
         }
+        // Don't show agent status messages when no agent is running —
+        // they're stale leftovers from a previous Claude Code session.
+        if entry.agent.is_none() && is_agent_status_message(&collapsed) {
+            return None;
+        }
+        Some(collapsed)
     })
+}
+
+fn is_agent_status_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("claude is waiting")
+        || lower.contains("claude is working")
+        || lower.contains("claude finished")
+        || lower.contains("claude stopped")
+        || lower.contains("claude interrupted")
+        || lower.contains("claude notification")
 }
 
 fn sidebar_entry_pull_request(entry: &WorkspaceEntry) -> Option<SidebarLine> {
