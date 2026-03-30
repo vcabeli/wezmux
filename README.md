@@ -45,7 +45,7 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 **Keyboard shortcuts:**
 | Shortcut | Action |
 |----------|--------|
-| `Option+` ` | Show/hide Wezmux from anywhere |
+| ``Option+ ` `` | Show/hide Wezmux from anywhere |
 | `Cmd+B` | Toggle sidebar |
 | `Option+Up/Down` | Switch to previous/next workspace |
 | `Option+1..9` | Switch to workspace by index |
