@@ -1948,6 +1948,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 ("next", *n)
             };
             let ordinal = english_ordinal(amount);
+            let keys = match *n {
+                -1 => vec![(Modifiers::ALT, "UpArrow".into())],
+                1 => vec![(Modifiers::ALT, "DownArrow".into())],
+                _ => vec![],
+            };
             CommandDef {
                 brief: format!("Switch to {ordinal} {direction} workspace").into(),
                 doc: format!(
@@ -1955,7 +1960,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                              ordered lexicographically by workspace name"
                 )
                 .into(),
-                keys: vec![],
+                keys,
                 args: &[ArgType::ActivePane],
                 menubar: &["Window", "Workspace"],
                 icon: None,
@@ -2159,6 +2164,8 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ActivateTab(-1),
         ActivateTabRelative(-1),
         ActivateTabRelative(1),
+        SwitchWorkspaceRelative(-1),
+        SwitchWorkspaceRelative(1),
         ActivateWorkspaceByIndex(0),
         ActivateWorkspaceByIndex(1),
         ActivateWorkspaceByIndex(2),
