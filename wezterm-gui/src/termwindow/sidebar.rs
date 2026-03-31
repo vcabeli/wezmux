@@ -1,7 +1,7 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::pane::{CachePolicy, PaneId};
 use mux::Mux;
+use mux::pane::{CachePolicy, PaneId};
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -294,9 +294,9 @@ impl crate::TermWindow {
             .cached_entries
             .as_ref()
             .map(|entries| {
-                entries.iter().all(|e| {
-                    mux.unread_notification_count_for_workspace(&e.name) == e.unread_count
-                })
+                entries
+                    .iter()
+                    .all(|e| mux.unread_notification_count_for_workspace(&e.name) == e.unread_count)
             })
             .unwrap_or(false);
         let cached_metadata_match = self
@@ -354,10 +354,8 @@ impl crate::TermWindow {
                                 if active_pane_process_info.is_none() {
                                     if let Some(pane) = tab.get_active_pane() {
                                         active_pane_id = Some(pane.pane_id());
-                                        active_pane_process_info =
-                                            pane.get_foreground_process_info(
-                                                CachePolicy::AllowStale,
-                                            );
+                                        active_pane_process_info = pane
+                                            .get_foreground_process_info(CachePolicy::AllowStale);
                                     }
                                 }
                             }
@@ -420,7 +418,9 @@ impl crate::TermWindow {
                 // failures don't wipe the preview on the next render frame.
                 if let Some(pane_id) = active_pane_id {
                     if let Some(ref agent) = agent {
-                        self.sidebar.last_known_agents.insert(pane_id, agent.agent_type);
+                        self.sidebar
+                            .last_known_agents
+                            .insert(pane_id, agent.agent_type);
                     }
                 }
 
@@ -433,27 +433,23 @@ impl crate::TermWindow {
                 }
 
                 // Apply display name override from workspace config
-                let display_title = self
-                    .sidebar
-                    .workspace_configs
-                    .display_name(&name);
-                let title = if display_title != name { display_title } else { title };
+                let display_title = self.sidebar.workspace_configs.display_name(&name);
+                let title = if display_title != name {
+                    display_title
+                } else {
+                    title
+                };
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
 
                 // Extract foreground process name for icon display
-                let foreground_process_name = active_pane_process_info
-                    .as_ref()
-                    .and_then(|info| {
-                        info.flatten_to_exe_names()
-                            .into_iter()
-                            .last()
-                            .map(|name| {
-                                std::path::Path::new(&name)
-                                    .file_name()
-                                    .map(|f| f.to_string_lossy().to_string())
-                                    .unwrap_or(name)
-                            })
-                    });
+                let foreground_process_name = active_pane_process_info.as_ref().and_then(|info| {
+                    info.flatten_to_exe_names().into_iter().last().map(|name| {
+                        std::path::Path::new(&name)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or(name)
+                    })
+                });
 
                 WorkspaceEntry {
                     is_active: active_workspace == name,
@@ -550,8 +546,7 @@ impl crate::TermWindow {
         };
 
         const COLOR_HEXES: &[&str] = &[
-            "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c",
-            "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
+            "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
         ];
 
         match tag {
@@ -569,18 +564,24 @@ impl crate::TermWindow {
             }
             5 => {
                 let all = Mux::get().iter_workspaces();
-                self.sidebar.workspace_configs.move_to_bottom(&workspace, &all);
+                self.sidebar
+                    .workspace_configs
+                    .move_to_bottom(&workspace, &all);
             }
             6 => {
                 self.close_workspace_by_name(&workspace);
             }
             100 => {
-                self.sidebar.workspace_configs.set_accent_color(&workspace, None);
+                self.sidebar
+                    .workspace_configs
+                    .set_accent_color(&workspace, None);
             }
             101..=108 => {
                 let idx = tag - 101;
                 if let Some(hex) = COLOR_HEXES.get(idx) {
-                    self.sidebar.workspace_configs.set_accent_color(&workspace, Some(hex.to_string()));
+                    self.sidebar
+                        .workspace_configs
+                        .set_accent_color(&workspace, Some(hex.to_string()));
                 }
             }
             _ => {}
@@ -826,9 +827,6 @@ fn build_agent_info(
                     .or(tool_fallback)
             }
             _ => {
-                // For idle/needs_input, prefer last working message
-                // (actual output) over current message (often a generic
-                // status like "Claude is waiting for your input").
                 pane_status.last_working_message
                     .or(pane_status.message)
                     .or(tool_fallback)
@@ -1146,7 +1144,10 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 
 #[cfg(test)]
 mod test {
-    use super::{parse_listening_ports, parse_pull_request, WorkspacePullRequest, WorkspacePullRequestStatus};
+    use super::{
+        WorkspacePullRequest, WorkspacePullRequestStatus,
+        parse_listening_ports, parse_pull_request,
+    };
 
     #[test]
     fn parses_listening_ports_from_lsof_output() {
@@ -1172,4 +1173,5 @@ n*:3000\n";
             })
         );
     }
+
 }

@@ -26,6 +26,11 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 - Badge counts in the sidebar
 - Toast-style notifications via OSC 9 / OSC 777
 
+**Agent integrations:**
+- **Claude Code** — hooks injected automatically via wrapper script (no setup needed)
+- **Codex** — hooks installed into `~/.codex/hooks.json` by `make install`
+- Status, tool activity, and output previews shown in the sidebar for both
+
 **OSC 7777 agent status protocol** for structured status reporting:
 ```
 \e]7777;status;working;Running tests\a
@@ -47,7 +52,7 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 |----------|--------|
 | ``Option+ ` `` | Show/hide Wezmux from anywhere |
 | `Cmd+B` | Toggle sidebar |
-| `Option+Up/Down` or `Option+K/J` | Switch to previous/next workspace |
+| `Option+K/J` | Switch to previous/next workspace |
 | `Option+1..9` | Switch to workspace by index |
 | `Option+U` | Jump to last unread notification |
 

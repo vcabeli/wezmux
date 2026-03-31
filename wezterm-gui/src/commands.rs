@@ -1949,8 +1949,8 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             };
             let ordinal = english_ordinal(amount);
             let keys = match *n {
-                -1 => vec![(Modifiers::ALT, "UpArrow".into()), (Modifiers::ALT, "k".into())],
-                1 => vec![(Modifiers::ALT, "DownArrow".into()), (Modifiers::ALT, "j".into())],
+                -1 => vec![(Modifiers::ALT, "k".into())],
+                1 => vec![(Modifiers::ALT, "j".into())],
                 _ => vec![],
             };
             CommandDef {

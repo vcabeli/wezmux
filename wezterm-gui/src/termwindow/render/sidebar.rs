@@ -13,6 +13,7 @@ use config::{Dimension, DimensionContext};
 use std::env;
 use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use wezterm_font::LoadedFont;
 use window::color::LinearRgba;
 
@@ -71,7 +72,11 @@ impl SidebarTheme {
     }
 }
 
-fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usize) -> Vec<SidebarLine> {
+fn sidebar_entry_body_lines(
+    entry: &WorkspaceEntry,
+    cols: usize,
+    mono_cols: usize,
+) -> Vec<SidebarLine> {
     let mut lines = vec![];
 
     // Agent status with message, falling back to notification text
@@ -108,7 +113,7 @@ fn sidebar_entry_body_lines(entry: &WorkspaceEntry, cols: usize, mono_cols: usiz
     // Git branch line (always show separately when available)
     if let Some(branch) = entry.git_branch.as_ref() {
         let branch_text = if entry.git_dirty {
-            format!("\u{e0a0} {branch}*")  // nf-pl-branch (powerline)
+            format!("\u{e0a0} {branch}*") // nf-pl-branch (powerline)
         } else {
             format!("\u{e0a0} {branch}")
         };
@@ -162,11 +167,27 @@ fn agent_status_symbol(status: AgentStatus) -> &'static str {
 
 fn agent_type_icon(agent_type: AgentType) -> &'static str {
     match agent_type {
-        AgentType::ClaudeCode => "\u{2733}",   // ✳ eight spoked asterisk (matches Claude Code's own tab icon)
-        AgentType::Codex => "\u{2731}",        // ✱ heavy asterisk
-        AgentType::Cursor => "\u{2731}",      // ✱ heavy asterisk
-        AgentType::Aider => "\u{2731}",       // ✱ heavy asterisk
-        AgentType::OpenCode => "\u{2731}",    // ✱ heavy asterisk
+        AgentType::ClaudeCode => "\u{2733}", // ✳ eight spoked asterisk (matches Claude Code's own tab icon)
+        AgentType::Codex => "\u{2731}",      // ✱ heavy asterisk
+        AgentType::Cursor => "\u{2731}",     // ✱ heavy asterisk
+        AgentType::Aider => "\u{2731}",      // ✱ heavy asterisk
+        AgentType::OpenCode => "\u{2731}",   // ✱ heavy asterisk
+    }
+}
+
+fn working_spinner_frame(milliseconds: u128) -> &'static str {
+    const FRAMES: [&str; 4] = ["\u{25D0}", "\u{25D3}", "\u{25D1}", "\u{25D2}"];
+    FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize]
+}
+
+fn sidebar_agent_title_icon(
+    agent: &crate::termwindow::sidebar::AgentInfo,
+    milliseconds: u128,
+) -> &'static str {
+    if matches!(agent.status, AgentStatus::Working) {
+        working_spinner_frame(milliseconds)
+    } else {
+        agent_type_icon(agent.agent_type)
     }
 }
 
@@ -174,22 +195,22 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
 fn process_icon(process_name: &str) -> Option<&'static str> {
     let lower = process_name.to_lowercase();
     match lower.as_str() {
-        "nvim" | "neovim" => Some("\u{e62b}"),       // nf-custom-vim
-        "vim" | "vi" => Some("\u{e62b}"),             // nf-custom-vim
-        "node" | "nodejs" => Some("\u{e718}"),        // nf-dev-nodejs_small
-        "python" | "python3" => Some("\u{e73c}"),     // nf-dev-python
-        "ruby" | "irb" => Some("\u{e739}"),           // nf-dev-ruby
-        "go" => Some("\u{e627}"),                     // nf-dev-go
-        "cargo" | "rustc" => Some("\u{e7a8}"),        // nf-dev-rust
-        "docker" => Some("\u{e7b0}"),                 // nf-dev-docker
-        "lua" | "luajit" => Some("\u{e620}"),         // nf-custom-lua
-        "java" | "javac" => Some("\u{e738}"),         // nf-dev-java
-        "swift" => Some("\u{e755}"),                  // nf-dev-swift
+        "nvim" | "neovim" => Some("\u{e62b}"),    // nf-custom-vim
+        "vim" | "vi" => Some("\u{e62b}"),         // nf-custom-vim
+        "node" | "nodejs" => Some("\u{e718}"),    // nf-dev-nodejs_small
+        "python" | "python3" => Some("\u{e73c}"), // nf-dev-python
+        "ruby" | "irb" => Some("\u{e739}"),       // nf-dev-ruby
+        "go" => Some("\u{e627}"),                 // nf-dev-go
+        "cargo" | "rustc" => Some("\u{e7a8}"),    // nf-dev-rust
+        "docker" => Some("\u{e7b0}"),             // nf-dev-docker
+        "lua" | "luajit" => Some("\u{e620}"),     // nf-custom-lua
+        "java" | "javac" => Some("\u{e738}"),     // nf-dev-java
+        "swift" => Some("\u{e755}"),              // nf-dev-swift
         "make" | "cmake" | "ninja" => Some("\u{f0ad}"), // nf-fa-wrench
-        "htop" | "btop" | "top" => Some("\u{f080}"),  // nf-fa-bar_chart
-        "ssh" => Some("\u{f489}"),                    // nf-oct-terminal
-        "tmux" | "zellij" => Some("\u{ebc8}"),           // nf-cod-split_horizontal
-        "git" => Some("\u{e702}"),                    // nf-dev-git
+        "htop" | "btop" | "top" => Some("\u{f080}"), // nf-fa-bar_chart
+        "ssh" => Some("\u{f489}"),                // nf-oct-terminal
+        "tmux" | "zellij" => Some("\u{ebc8}"),    // nf-cod-split_horizontal
+        "git" => Some("\u{e702}"),                // nf-dev-git
         "npm" | "yarn" | "pnpm" | "bun" => Some("\u{e71e}"), // nf-dev-npm
         "psql" | "mysql" | "sqlite3" => Some("\u{f1c0}"), // nf-fa-database
         _ => None,
@@ -257,6 +278,12 @@ fn is_agent_status_message(msg: &str) -> bool {
         || lower.contains("claude stopped")
         || lower.contains("claude interrupted")
         || lower.contains("claude notification")
+        || lower.contains("codex is waiting")
+        || lower.contains("codex is working")
+        || lower.contains("codex finished")
+        || lower.contains("codex stopped")
+        || lower.contains("codex interrupted")
+        || lower.contains("codex notification")
 }
 
 fn sidebar_entry_pull_request(entry: &WorkspaceEntry) -> Option<SidebarLine> {
@@ -277,9 +304,9 @@ fn sidebar_pull_request_text(pull_request: &WorkspacePullRequest) -> String {
 
 fn sidebar_pull_request_symbol(status: WorkspacePullRequestStatus) -> &'static str {
     match status {
-        WorkspacePullRequestStatus::Open => "\u{f407}",    // oct-git_pull_request
-        WorkspacePullRequestStatus::Merged => "\u{f419}",  // oct-git_merge
-        WorkspacePullRequestStatus::Closed => "\u{f4dc}",  // oct-git_pull_request_closed
+        WorkspacePullRequestStatus::Open => "\u{f407}", // oct-git_pull_request
+        WorkspacePullRequestStatus::Merged => "\u{f419}", // oct-git_merge
+        WorkspacePullRequestStatus::Closed => "\u{f4dc}", // oct-git_pull_request_closed
     }
 }
 
@@ -356,6 +383,7 @@ fn build_card_element(
     mono_cols: usize,
     card_width: f32,
     theme: &SidebarTheme,
+    milliseconds: u128,
 ) -> Element {
     let is_active = entry.is_active;
     let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
@@ -374,8 +402,16 @@ fn build_card_element(
 
     // Title line (with optional unread badge prefix and nerd font icon)
     let title_text = if let Some(ref agent) = entry.agent {
-        format!("{} {}", agent_type_icon(agent.agent_type), agent.display_name)
-    } else if let Some(icon) = entry.foreground_process_name.as_deref().and_then(process_icon) {
+        format!(
+            "{} {}",
+            sidebar_agent_title_icon(agent, milliseconds),
+            agent.display_name
+        )
+    } else if let Some(icon) = entry
+        .foreground_process_name
+        .as_deref()
+        .and_then(process_icon)
+    {
         format!("{} {}", icon, entry.title)
     } else {
         entry.title.clone()
@@ -408,11 +444,7 @@ fn build_card_element(
                 }),
         );
     }
-    title_parts.push(text_element_fg(
-        font,
-        &title_text,
-        title_color,
-    ));
+    title_parts.push(text_element_fg(font, &title_text, title_color));
 
     card_children.push(
         Element::new(font, ElementContent::Children(title_parts))
@@ -444,9 +476,10 @@ fn build_card_element(
                 };
                 (mono_font, fg)
             }
-            SidebarLineStyle::PullRequest(status) => {
-                (mono_font, sidebar_pull_request_color(status, is_active, theme))
-            }
+            SidebarLineStyle::PullRequest(status) => (
+                mono_font,
+                sidebar_pull_request_color(status, is_active, theme),
+            ),
             SidebarLineStyle::StatusIndicator(status) => {
                 (body_font, sidebar_status_color(status, is_active, theme))
             }
@@ -467,10 +500,7 @@ fn build_card_element(
     let inner_width = (card_width - 12.0).max(1.0);
 
     // Left accent bar: 3px on active cards, or when a custom color is set
-    let custom_accent = entry
-        .accent_color
-        .as_deref()
-        .map(hex_to_linear);
+    let custom_accent = entry.accent_color.as_deref().map(hex_to_linear);
     let accent = custom_accent.unwrap_or(theme.accent);
 
     let hover_colors = if !is_active {
@@ -610,39 +640,39 @@ impl crate::TermWindow {
         let text_cols = (text_width / avg_char_width).floor().max(1.0) as usize;
         // Mono font has fixed-width characters — use cell_size directly
         let mono_metrics = RenderMetrics::with_font_metrics(&mono_font.metrics());
-        let mono_cols = (text_width / mono_metrics.cell_size.width as f32).floor().max(1.0) as usize;
+        let mono_cols = (text_width / mono_metrics.cell_size.width as f32)
+            .floor()
+            .max(1.0) as usize;
 
         // Build Element tree
         let mut root_children: Vec<Element> = vec![];
 
         // Toolbar row: [+] [bell] [split-h] [split-v]
-        let toolbar_button = |font: &Rc<LoadedFont>,
-                              label: &str,
-                              item_type: UIItemType|
-         -> Element {
-            Element::new(font, ElementContent::Text(label.to_string()))
-                .item_type(item_type)
-                .colors(ElementColors {
-                    border: BorderColor::default(),
-                    bg: InheritableColor::Inherited,
-                    text: theme.muted.into(),
-                })
-                .hover_colors(Some(ElementColors {
-                    border: BorderColor::default(),
-                    bg: LinearRgba::with_srgba(255, 255, 255, 25).into(),
-                    text: theme.text.into(),
-                }))
-                .padding(BoxDimension {
-                    left: Dimension::Pixels(6.),
-                    right: Dimension::Pixels(6.),
-                    top: Dimension::Pixels(4.),
-                    bottom: Dimension::Pixels(4.),
-                })
-        };
+        let toolbar_button =
+            |font: &Rc<LoadedFont>, label: &str, item_type: UIItemType| -> Element {
+                Element::new(font, ElementContent::Text(label.to_string()))
+                    .item_type(item_type)
+                    .colors(ElementColors {
+                        border: BorderColor::default(),
+                        bg: InheritableColor::Inherited,
+                        text: theme.muted.into(),
+                    })
+                    .hover_colors(Some(ElementColors {
+                        border: BorderColor::default(),
+                        bg: LinearRgba::with_srgba(255, 255, 255, 25).into(),
+                        text: theme.text.into(),
+                    }))
+                    .padding(BoxDimension {
+                        left: Dimension::Pixels(6.),
+                        right: Dimension::Pixels(6.),
+                        top: Dimension::Pixels(4.),
+                        bottom: Dimension::Pixels(4.),
+                    })
+            };
 
         let toolbar_items: Vec<Element> = vec![
             toolbar_button(&font, "\u{25EB}", UIItemType::SidebarSplitHorizontal), // ◫ split left|right
-            toolbar_button(&font, "\u{229F}", UIItemType::SidebarSplitVertical),   // ⊟ split top/bottom
+            toolbar_button(&font, "\u{229F}", UIItemType::SidebarSplitVertical), // ⊟ split top/bottom
         ];
 
         root_children.push(
@@ -674,8 +704,24 @@ impl crate::TermWindow {
 
         // Workspace cards
         let entries = self.sidebar_entries();
+        let milliseconds = self.created.elapsed().as_millis();
+        if entries.iter().any(|entry| {
+            entry.agent.as_ref().map(|agent| agent.status) == Some(AgentStatus::Working)
+        }) {
+            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
+        }
         for entry in &entries {
-            root_children.push(build_card_element(&font, &body_font, &mono_font, entry, text_cols, mono_cols, content_width, &theme));
+            root_children.push(build_card_element(
+                &font,
+                &body_font,
+                &mono_font,
+                entry,
+                text_cols,
+                mono_cols,
+                content_width,
+                &theme,
+                milliseconds,
+            ));
         }
 
         // Reserve space at the bottom for the fixed "New workspace" button
@@ -741,18 +787,19 @@ impl crate::TermWindow {
         }
 
         // "New workspace" button — fixed at the bottom of the sidebar (not scrollable)
-        let new_ws_label = Element::new(&font, ElementContent::Text("+  New workspace".to_string()))
-            .colors(ElementColors {
-                border: BorderColor::default(),
-                bg: InheritableColor::Inherited,
-                text: theme.muted.into(),
-            })
-            .hover_colors(Some(ElementColors {
-                border: BorderColor::default(),
-                bg: InheritableColor::Inherited,
-                text: theme.text.into(),
-            }))
-            .item_type(UIItemType::SidebarNewWorkspace);
+        let new_ws_label =
+            Element::new(&font, ElementContent::Text("+  New workspace".to_string()))
+                .colors(ElementColors {
+                    border: BorderColor::default(),
+                    bg: InheritableColor::Inherited,
+                    text: theme.muted.into(),
+                })
+                .hover_colors(Some(ElementColors {
+                    border: BorderColor::default(),
+                    bg: InheritableColor::Inherited,
+                    text: theme.text.into(),
+                }))
+                .item_type(UIItemType::SidebarNewWorkspace);
 
         let new_ws_button = Element::new(&font, ElementContent::Children(vec![new_ws_label]))
             .display(DisplayType::Block)
@@ -887,7 +934,11 @@ fn wrap_text_to_cells(text: &str, cols: usize, max_lines: usize) -> Vec<String> 
     visible
 }
 
-fn sidebar_pull_request_color(status: WorkspacePullRequestStatus, is_active: bool, theme: &SidebarTheme) -> LinearRgba {
+fn sidebar_pull_request_color(
+    status: WorkspacePullRequestStatus,
+    is_active: bool,
+    theme: &SidebarTheme,
+) -> LinearRgba {
     if is_active {
         return theme.active_muted;
     }
@@ -901,11 +952,12 @@ fn sidebar_pull_request_color(status: WorkspacePullRequestStatus, is_active: boo
 #[cfg(test)]
 mod test {
     use super::{
-        format_listening_ports, sidebar_entry_body_lines,
-        sidebar_pull_request_text, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
+        SidebarLine, SidebarLineStyle, format_listening_ports, sidebar_entry_body_lines,
+        sidebar_pull_request_text, wrap_text_to_cells,
     };
     use crate::termwindow::sidebar::{
-        WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
+        AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
+        WorkspacePullRequestStatus,
     };
     use std::path::Path;
 
@@ -991,6 +1043,52 @@ mod test {
                 status: WorkspacePullRequestStatus::Merged,
             }),
             "\u{f419} PR #680 merged".to_string()
+        );
+    }
+
+    #[test]
+    fn agent_card_falls_back_to_notification_preview() {
+        let entry = WorkspaceEntry {
+            name: "alpha".to_string(),
+            title: "Codex".to_string(),
+            cwd: Some("wezmux".to_string()),
+            cwd_path: Some(Path::new("/tmp/wezmux").to_path_buf()),
+            git_branch: Some("main".to_string()),
+            git_dirty: false,
+            listening_ports: vec![],
+            pull_request: None,
+            latest_notification: Some("Running cargo build".to_string()),
+            unread_count: 0,
+            tab_count: 1,
+            pane_count: 1,
+            is_active: false,
+            is_hovered: false,
+            agent: Some(AgentInfo {
+                agent_type: AgentType::Codex,
+                display_name: "Codex".to_string(),
+                status: AgentStatus::Working,
+                status_message: None,
+            }),
+            foreground_process_name: None,
+            accent_color: None,
+        };
+
+        assert_eq!(
+            sidebar_entry_body_lines(&entry, 28, 28),
+            vec![
+                SidebarLine {
+                    text: "Running cargo build".to_string(),
+                    style: SidebarLineStyle::Preview,
+                },
+                SidebarLine {
+                    text: "\u{25B6} Working".to_string(),
+                    style: SidebarLineStyle::StatusIndicator(AgentStatus::Working),
+                },
+                SidebarLine {
+                    text: "\u{e0a0} main \u{2022} /tmp/wezmux".to_string(),
+                    style: SidebarLineStyle::Meta,
+                }
+            ]
         );
     }
 }
