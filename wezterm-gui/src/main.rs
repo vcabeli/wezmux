@@ -1258,6 +1258,19 @@ fn run() -> anyhow::Result<()> {
     stats::Stats::init()?;
     let _saver = umask::UmaskSaver::new();
 
+    // Seed ~/.wezmux.lua on first launch so fresh installs get sane defaults
+    {
+        let wezmux_lua = config::HOME_DIR.join(".wezmux.lua");
+        if !wezmux_lua.exists() {
+            static DEFAULT_WEZMUX_LUA: &str = include_str!("../../config/src/default_wezmux.lua");
+            if let Err(err) = std::fs::write(&wezmux_lua, DEFAULT_WEZMUX_LUA) {
+                log::warn!("Failed to seed {}: {err:#}", wezmux_lua.display());
+            } else {
+                log::info!("Seeded default config at {}", wezmux_lua.display());
+            }
+        }
+    }
+
     config::common_init(
         opts.config_file.as_ref(),
         &opts.config_override,
