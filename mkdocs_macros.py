@@ -16,7 +16,7 @@ def define_env(env):
             first_line = "*Since: Nightly Builds Only*"
             expanded = "+"
             blurb = f"""
-    The functionality described in this section requires a nightly build of wezterm.
+    The functionality described in this section requires a nightly build of Wezmux.
     You can obtain a nightly build by following the instructions from the
     [Download]({rel_root}installation.md) section.
 """
@@ -24,7 +24,7 @@ def define_env(env):
             first_line = f"*Since: Version {vers}*"
             expanded = ""
             blurb = f"""
-    *The functionality described in this section requires version {vers} of wezterm,
+    *The functionality described in this section requires version {vers} of Wezmux,
     or a more recent version.*
 """
 

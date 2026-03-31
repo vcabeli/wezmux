@@ -4,7 +4,7 @@
 
 # Wezmux
 
-A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Built as a personal tool for running multiple AI coding agents side-by-side and knowing at a glance which workspace needs attention.
+A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Wezmux focuses on running multiple coding agents side-by-side and making each workspace's state visible at a glance.
 
 ![Wezmux screenshot](assets/screenshot.png)
 
@@ -52,6 +52,11 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 | `Option+U` | Jump to last unread notification |
 
 ## Install
+
+Public Wezmux `v1.0` support is currently macOS-only. The source tree still
+contains inherited upstream cross-platform code, but builds outside the
+documented macOS path should be treated as best-effort until Wezmux-specific
+support is published for them.
 
 ### Prerequisites
 
@@ -104,7 +109,9 @@ open target/Wezmux.app
 
 ## Config
 
-Wezmux shares `~/.wezterm.lua` with WezTerm. Guard Wezmux-specific fields so stock WezTerm doesn't error:
+Wezmux prefers `~/.wezmux.lua`, but it will also read `~/.wezterm.lua` for compatibility with existing WezTerm setups.
+
+If you share config with stock WezTerm, guard Wezmux-specific fields so upstream WezTerm doesn't error:
 
 ```lua
 pcall(function()

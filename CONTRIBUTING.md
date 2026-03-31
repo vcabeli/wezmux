@@ -1,4 +1,4 @@
-# Contributing to wezterm
+# Contributing to Wezmux
 
 Thanks for considering donating your time and energy!  I value any contribution,
 even if it is just to highlight a typo.
@@ -30,7 +30,7 @@ Look at [mkdocs serve](https://www.mkdocs.org/user-guide/cli/#mkdocs-serve) for 
 There are a lot of targets out there.  Today we have docs that are Ubuntu biased
 and I know that there are a lot of flavors of Linux. Rather than expand the README
 with instructions for those, please translate the instructions into steps that
-can be run in the [`get-deps`](https://github.com/wezterm/wezterm/blob/master/get-deps)
+    can be run in the [`get-deps`](https://github.com/vcabeli/wezmux/blob/main/get-deps)
 script.
 
 ## Contributing code
@@ -94,7 +94,7 @@ $ cargo test --all
 
 There are some helper classes for writing tests for terminal behavior.
 Here's [an example of a test to verify that the terminal contents
-match expectations](https://github.com/wezterm/wezterm/blob/fd532a8c2fb3b56593597cf8be1775da1feda0a3/term/src/test/mod.rs#L314).
+match expectations](https://github.com/vcabeli/wezmux/blob/main/term/src/test/mod.rs#L314).
 
 Please also make a point of adding comments to your tests to help
 clarify the intent of the test!
@@ -126,4 +126,3 @@ $ rustup component add rustfmt-preview          # you only need to do this once
 $ cargo test --all
 $ cargo fmt --all
 ```
-

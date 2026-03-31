@@ -10,16 +10,21 @@ changelog
 
 ## Changes
 
-Releases are named using the date, time and git commit hash.
+Wezmux public releases use semantic versioning and git tags of the form
+`vMAJOR.MINOR.PATCH`.
 
-### Continuous/Nightly
+Current public support is macOS-first while the inherited upstream
+cross-platform packaging is being adapted to Wezmux.
 
-A bleeding edge build is produced continually (as commits are made, and at
-least a daily scheduled build) from the `main` branch.  It *may* not be usable
-and the feature set may change, but since @wez uses this as a daily driver, its
-usually the best available version.
+### 1.0.0
 
-As features stabilize some brief notes about them will accumulate here.
+Initial Wezmux release planning baseline.
+
+### Archived upstream WezTerm notes
+
+The notes below were inherited from upstream WezTerm prior to the Wezmux fork.
+They are retained as engineering reference and should not be interpreted as
+Wezmux release notes.
 
 #### Changed
 * Wayland: currently being reimplemented, it maybe more unstable than usual.
@@ -2509,5 +2514,4 @@ font_hinting = "Full" # None, Vertical, VerticalSubpixel, Full
 * `wezterm imgcat /some/image.png` to display images inline in the terminal using the iTerm2 image protocol
 * IME support on macOS and Windows systems
 * Automatic fallback to software rendering if no GPU is available (eg: certain types of remote desktop sessions)
-
 

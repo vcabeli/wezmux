@@ -18,6 +18,7 @@ CATEGORIZE = {
     r"Ubuntu20.04.tar.xz$": "linux_raw_bin",
     r"^wezterm-\d+-\d+-[a-f0-9]+.tar.xz$": "linux_raw_bin",
     r"src.tar.gz$": "src",
+    r"^Wezmux-macos-.*.zip$": "macos_zip",
     r"^WezTerm-macos-.*.zip$": "macos_zip",
     r"^WezTerm-windows-.*.zip$": "windows_zip",
     r"^WezTerm-.*.setup.exe$": "windows_exe",
@@ -28,7 +29,7 @@ CATEGORIZE = {
 def categorize(rel):
     downloads = {}
 
-    tag_name = "wezterm-%s" % rel["tag_name"]
+    tag_name = "wezmux-%s" % rel["tag_name"]
     for asset in rel["assets"]:
         url = asset["browser_download_url"]
         name = asset["name"]
@@ -58,10 +59,10 @@ def build_subst(subst, stable, categorized):
 
 
 def load_release_info():
-    with open("/tmp/wezterm.releases.json") as f:
+    with open("/tmp/wezmux.releases.json") as f:
         release_info = json.load(f)
 
-    with open("/tmp/wezterm.nightly.json") as f:
+    with open("/tmp/wezmux.nightly.json") as f:
         nightly = json.load(f)
 
     latest = None

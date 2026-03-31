@@ -3,15 +3,24 @@ set -x
 name="$1"
 
 notes=$(cat <<EOT
-See https://wezterm.org/changelog.html#$name for the changelog
+See the repository changelog and release checklist for current Wezmux release notes:
 
-If you're looking for nightly downloads or more detailed installation instructions:
+- https://github.com/vcabeli/wezmux/blob/main/docs/changelog.md
+- https://github.com/vcabeli/wezmux/blob/main/TODO/v1-release.md
 
-[Windows](https://wezterm.org/install/windows.html)
-[macOS](https://wezterm.org/install/macos.html)
-[Linux](https://wezterm.org/install/linux.html)
-[FreeBSD](https://wezterm.org/install/freebsd.html)
+If you're looking for installation instructions:
+
+[README](https://github.com/vcabeli/wezmux#readme)
+[Installation](https://github.com/vcabeli/wezmux/blob/main/docs/installation.md)
 EOT
 )
 
-gh release view "$name" || gh release create --prerelease --notes "$notes" --title "$name" "$name"
+if gh release view "$name" >/dev/null 2>&1; then
+  exit 0
+fi
+
+if [[ "$name" == nightly* ]]; then
+  gh release create --prerelease --notes "$notes" --title "$name" "$name"
+else
+  gh release create --notes "$notes" --title "$name" "$name"
+fi

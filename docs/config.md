@@ -1,6 +1,7 @@
 # Wezmux Configuration
 
-Wezmux uses the same Lua config system as WezTerm. Config files are loaded in priority order:
+Wezmux uses the same Lua config system as WezTerm, but prefers a Wezmux-specific
+config file when present. Config files are loaded in priority order:
 
 1. `WEZMUX_CONFIG_FILE` env var (if set)
 2. `WEZTERM_CONFIG_FILE` env var (if set)
@@ -82,4 +83,4 @@ Active card text is always white — it's derived automatically to ensure contra
 
 ## Other settings
 
-All standard [WezTerm configuration](https://wezfurlong.org/wezterm/config/files.html) works in `~/.wezmux.lua`.
+All standard [WezTerm configuration](https://wezfurlong.org/wezterm/config/files.html) works in `~/.wezmux.lua`. Wezmux will also read `~/.wezterm.lua` for compatibility, but `~/.wezmux.lua` is the preferred public entrypoint for Wezmux-specific configuration.

@@ -33,8 +33,8 @@ function ghapi() {
   fi
 }
 
-[[ -f /tmp/wezterm.releases.json ]] || ghapi /repos/wezterm/wezterm/releases > /tmp/wezterm.releases.json
-[[ -f /tmp/wezterm.nightly.json ]] || ghapi /repos/wezterm/wezterm/releases/tags/nightly > /tmp/wezterm.nightly.json
+[[ -f /tmp/wezmux.releases.json ]] || ghapi /repos/vcabeli/wezmux/releases > /tmp/wezmux.releases.json
+[[ -f /tmp/wezmux.nightly.json ]] || ghapi /repos/vcabeli/wezmux/releases/tags/nightly > /tmp/wezmux.nightly.json
 python3 ci/subst-release-info.py || exit 1
 python3 ci/generate-docs.py || exit 1
 

@@ -29,20 +29,18 @@ body:
   - type: input
     id: version
     attributes:
-      label: WezTerm version
+      label: Wezmux version
       description: |
         Please run `wezterm -V` and include its output here.
-        If you installed the flatpak version of wezterm, please consider trying
-        the native package format for your system and comparing the behavior,
-        as flatpak runs in an isolated sandbox that can prevent some functionality
-        from working fully.
+        Current Wezmux builds still report through the `wezterm` binary name, so
+        using `wezterm -V` is expected for now.
       placeholder: "ex: 20210816-085256-935c1f48"
     validations:
       required: true
   - type: dropdown
     id: triednightly
     attributes:
-      label: Did you try the latest nightly build to see if the issue is better (or worse!) than your current version?
+      label: Did you try the latest build to see if the issue is better (or worse!) than your current version?
       options:
         - Yes, and I updated the version box above to show the version of the nightly that I tried
         - No, and I'll explain why below
@@ -69,7 +67,7 @@ body:
     attributes:
       label: Configuration
       description: |
-        Please include the relevant section(s) of your `wezterm.lua` configuration file.
+        Please include the relevant section(s) of your `wezmux.lua` or `wezterm.lua` configuration file.
         You can enter "no config" if the issue happens without you having made a config file.    
     validations:
       required: true

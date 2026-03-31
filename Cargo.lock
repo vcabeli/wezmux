@@ -5493,7 +5493,7 @@ checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 
 [[package]]
 name = "strip-ansi-escapes"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "termwiz",
@@ -6636,7 +6636,7 @@ checksum = "009936b22a61d342859b5f0ea64681cbb35a358ab548e2a44a8cf0dac2d980b8"
 
 [[package]]
 name = "wezterm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -6874,7 +6874,7 @@ dependencies = [
 
 [[package]]
 name = "wezterm-gui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "benchmarking",
@@ -6980,7 +6980,7 @@ dependencies = [
 
 [[package]]
 name = "wezterm-mux-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async_ossl",

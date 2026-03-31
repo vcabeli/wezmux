@@ -3,13 +3,11 @@ hide:
   - navigation
 ---
 
-WezTerm is available pre-built for the major platforms and, because it is open
-source, you may also build it for yourself.
+Wezmux currently documents and packages a macOS-first workflow.
 
- - [Windows](install/windows.md)
+The repository still contains the broader upstream WezTerm source and packaging
+layout, but those platform paths should be treated as inherited internals until
+Wezmux-specific support is documented and released.
+
  - [macOS](install/macos.md)
- - [Linux](install/linux.md)
- - [FreeBSD](install/freebsd.md)
- - [NetBSD](install/netbsd.md)
  - [Build from source](install/source.md)
-

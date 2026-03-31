@@ -1,10 +1,10 @@
-copyright: Copyright &copy; 2018-Present Wez Furlong
+copyright: Copyright &copy; 2018-Present Wezmux contributors
 use_directory_urls: false
-site_name: Wez's Terminal Emulator
-site_url: https://wezterm.org/
-site_description: Wez's Terminal Emulator
-repo_url: https://github.com/wezterm/wezterm
-repo_name: wezterm/wezterm
+site_name: Wezmux
+site_url: https://github.com/vcabeli/wezmux
+site_description: Workspace-aware terminal for multi-agent workflows
+repo_url: https://github.com/vcabeli/wezmux
+repo_name: vcabeli/wezmux
 edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: gh_pages
@@ -97,8 +97,8 @@ markdown_extensions:
   - pymdownx.saneheaders
   - pymdownx.magiclink:
       repo_url_shorthand: true
-      user: wezterm
-      repo: wezterm
+      user: vcabeli
+      repo: wezmux
   - pymdownx.details
   - attr_list
   - md_in_html
@@ -128,8 +128,4 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/wezterm/wezterm
-    - icon: fontawesome/brands/mastodon
-      link: https://fosstodon.org/@wez
-    - icon: fontawesome/brands/twitter
-      link: https://twitter.com/wezfurlong
+      link: https://github.com/vcabeli/wezmux

@@ -5,8 +5,14 @@ APP_DIR ?= /Applications/Wezmux.app
 all: build
 
 test:
-	cargo nextest run
-	cargo nextest run -p wezterm-escape-parser # no_std by default
+	@if cargo nextest --version >/dev/null 2>&1; then \
+		cargo nextest run; \
+		cargo nextest run -p wezterm-escape-parser; \
+	else \
+		echo "cargo-nextest not found; falling back to cargo test"; \
+		cargo test --workspace; \
+		cargo test -p wezterm-escape-parser; \
+	fi
 
 check:
 	cargo check

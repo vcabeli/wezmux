@@ -97,6 +97,14 @@ impl WorkspaceConfigs {
             .unwrap_or_else(|| workspace.to_string())
     }
 
+    /// Set display name override for a workspace.
+    #[allow(dead_code)]
+    pub fn set_display_name(&mut self, workspace: &str, display_name: Option<String>) {
+        let entry = self.workspaces.entry(workspace.to_string()).or_default();
+        entry.display_name = display_name;
+        self.prune_empty_workspace(workspace);
+    }
+
     /// Get accent color for workspace, validated as #RRGGBB.
     pub fn accent_color(&self, workspace: &str) -> Option<String> {
         self.workspaces
@@ -123,6 +131,7 @@ impl WorkspaceConfigs {
             .entry(workspace.to_string())
             .or_default();
         entry.accent_color = color;
+        self.prune_empty_workspace(workspace);
     }
 
     /// Get ordered workspace list. Takes the raw workspace list from mux, returns reordered.
@@ -205,6 +214,15 @@ impl WorkspaceConfigs {
             if !self.workspace_order.contains(name) {
                 self.workspace_order.push(name.clone());
             }
+        }
+    }
+
+    fn prune_empty_workspace(&mut self, workspace: &str) {
+        let remove = self.workspaces.get(workspace).is_some_and(|entry| {
+            entry.display_name.is_none() && entry.accent_color.is_none()
+        });
+        if remove {
+            self.workspaces.remove(workspace);
         }
     }
 }

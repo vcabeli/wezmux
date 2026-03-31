@@ -6,26 +6,20 @@ official packages, but it should give a sense of what is intended to go where.
 
 ## Versioning
 
-WezTerms version number is derived from the date of the commit from which it
-was released:
-
-```
-git -c "core.abbrev=8" show -s "--format=%cd-%h" "--date=format:%Y%m%d-%H%M%S"
-```
+Wezmux public releases use semantic versioning and git tags of the form
+`vMAJOR.MINOR.PATCH`.
 
 If you are not building wezterm from its git repo, wezterm will read a file named
 `.tag` in the root of its source tree to determine the version.
 
-Please package using the `wezterm-YYYYMMDD-HHMMSS-HASH-src.tar.gz` release
-asset from the release, rather than the automatic GitHub source tarball.
-Not only is it a smaller download, but it already contains an appropriate
-`.tag` file with the release version baked into it.
+Please package using the explicitly published Wezmux release asset from the
+release, rather than the automatic GitHub source tarball.
 
 If you must decorate wezterm's version, then it is recommend that you append
 your supplemental extra version information on the end of the wezterm's
 version.
 
-For example: `YYYYMMDD-HHMMSS-HASH-EXTRA`.
+For example: `1.0.0-EXTRA`.
 
 If `-` is illegal in your package management system, then it is recommended
 that you substitute either `.` or `_` to separate the portions of the version
@@ -92,4 +86,3 @@ disable that feature when you build wezterm:
 ```
 cargo build --release -p wezterm-gui --no-default-features --features distro-defaults,vendored-fonts
 ```
-

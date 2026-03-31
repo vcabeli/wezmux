@@ -913,7 +913,7 @@ mod test {
     fn listening_ports_are_compact() {
         assert_eq!(
             format_listening_ports(&[3000, 5173, 8080, 9000]),
-            Some(":3000, :5173, :8080 +1".to_string())
+            Some("\u{f0ac} :3000, :5173, :8080 +1".to_string())
         );
     }
 
@@ -940,6 +940,7 @@ mod test {
             is_active: false,
             is_hovered: false,
             agent: None,
+            foreground_process_name: None,
             accent_color: None,
         };
 
@@ -951,11 +952,15 @@ mod test {
                     style: SidebarLineStyle::Preview,
                 },
                 SidebarLine {
-                    text: "bucket is truncated unexp...".to_string(),
+                    text: "bucket is truncated".to_string(),
                     style: SidebarLineStyle::Preview,
                 },
                 SidebarLine {
-                    text: "main* \u{2022} /tmp/wezmux".to_string(),
+                    text: "unexpectedly".to_string(),
+                    style: SidebarLineStyle::Preview,
+                },
+                SidebarLine {
+                    text: "\u{e0a0} main* \u{2022} /tmp/wezmux".to_string(),
                     style: SidebarLineStyle::Meta,
                 },
                 SidebarLine {
@@ -963,7 +968,7 @@ mod test {
                     style: SidebarLineStyle::PullRequest(WorkspacePullRequestStatus::Open),
                 },
                 SidebarLine {
-                    text: ":3000".to_string(),
+                    text: "\u{f0ac} :3000".to_string(),
                     style: SidebarLineStyle::Secondary,
                 }
             ]

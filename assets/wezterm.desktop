@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=WezTerm
-Comment=Wez's Terminal Emulator
+Name=Wezmux
+Comment=Workspace-aware terminal for multi-agent workflows
 Keywords=shell;prompt;command;commandline;cmd;
-Icon=org.wezfurlong.wezterm
-StartupWMClass=org.wezfurlong.wezterm
+Icon=org.wezmux.wezmux
+StartupWMClass=org.wezmux.wezmux
 TryExec=wezterm
 Exec=wezterm start --cwd .
 Type=Application
