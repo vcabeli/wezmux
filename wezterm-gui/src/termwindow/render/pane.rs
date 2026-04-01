@@ -576,58 +576,8 @@ impl crate::TermWindow {
             // TODO: render a thingy to jump to prior prompt
         }
         */
-        if mux::Mux::get().pane_has_unread_notifications(pane_id) {
-            self.paint_notification_ring(layers, background_rect)?;
-        }
-
         metrics::histogram!("paint_pane.lines").record(start.elapsed());
         log::trace!("lines elapsed {:?}", start.elapsed());
-
-        Ok(())
-    }
-
-    fn paint_notification_ring(
-        &self,
-        layers: &mut TripleLayerQuadAllocator,
-        rect: euclid::Rect<f32, window::PixelUnit>,
-    ) -> anyhow::Result<()> {
-        let ring = LinearRgba::with_srgba(102, 217, 239, 255);
-        let thickness = 3.0;
-
-        self.filled_rectangle(
-            layers,
-            2,
-            euclid::rect(rect.min_x(), rect.min_y(), rect.width(), thickness),
-            ring,
-        )?;
-        self.filled_rectangle(
-            layers,
-            2,
-            euclid::rect(
-                rect.min_x(),
-                rect.max_y() - thickness,
-                rect.width(),
-                thickness,
-            ),
-            ring,
-        )?;
-        self.filled_rectangle(
-            layers,
-            2,
-            euclid::rect(rect.min_x(), rect.min_y(), thickness, rect.height()),
-            ring,
-        )?;
-        self.filled_rectangle(
-            layers,
-            2,
-            euclid::rect(
-                rect.max_x() - thickness,
-                rect.min_y(),
-                thickness,
-                rect.height(),
-            ),
-            ring,
-        )?;
 
         Ok(())
     }
