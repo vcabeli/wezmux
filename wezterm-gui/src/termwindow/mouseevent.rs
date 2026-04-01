@@ -538,9 +538,6 @@ impl super::TermWindow {
             WMEK::Press(MousePress::Left) => {
                 front_end().switch_workspace(&workspace);
 
-                let mux = Mux::get();
-                mux.mark_workspace_notifications_read(&workspace);
-
                 // Force sidebar cache rebuild so badge clears immediately
                 self.sidebar.invalidate_cache();
 

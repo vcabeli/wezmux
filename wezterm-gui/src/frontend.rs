@@ -490,6 +490,7 @@ impl GuiFrontEnd {
     pub fn switch_workspace(&self, workspace: &str) {
         let mux = Mux::get();
         mux.set_active_workspace_for_client(&self.client_id, workspace);
+        mux.mark_workspace_notifications_read(workspace);
         *self.switching_workspaces.borrow_mut() = false;
         self.reconcile_workspace();
     }

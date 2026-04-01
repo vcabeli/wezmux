@@ -3066,10 +3066,8 @@ impl TermWindow {
                 }
             }
             ActivateWorkspaceByIndex(index) => {
-                let mux = Mux::get();
                 let workspaces = self.ordered_workspaces();
                 if let Some(w) = workspaces.get(*index) {
-                    mux.mark_workspace_notifications_read(w);
                     front_end().switch_workspace(w);
                 }
             }

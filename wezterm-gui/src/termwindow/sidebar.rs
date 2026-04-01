@@ -529,7 +529,6 @@ impl crate::TermWindow {
                     let workspace = window.get_workspace().to_string();
                     let switcher = WorkspaceSwitcher::new(&workspace);
                     mux.set_active_workspace(&workspace);
-                    mux.mark_workspace_notifications_read(&workspace);
                     switcher.do_switch();
                 }
             }
