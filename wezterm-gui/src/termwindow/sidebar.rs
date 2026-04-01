@@ -408,6 +408,23 @@ impl crate::TermWindow {
                             }
                         });
                 let unread_count = mux.unread_notification_count_for_workspace(&name);
+
+                // Clear stale agent cache before building agent info.
+                // If we CAN see the foreground process and it's NOT an agent,
+                // the agent has genuinely exited. If process_info is None,
+                // it's a transient detection failure — keep the cache.
+                if let Some(pane_id) = active_pane_id {
+                    if active_pane_process_info.is_some()
+                        && active_pane_process_info
+                            .as_ref()
+                            .and_then(detect_agent_type)
+                            .is_none()
+                    {
+                        self.sidebar.last_known_agents.remove(&pane_id);
+                        mux.remove_agent_status(pane_id);
+                    }
+                }
+
                 let agent = build_agent_info(
                     active_pane_process_info.as_ref(),
                     active_pane_id,

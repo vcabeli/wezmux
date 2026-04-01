@@ -101,13 +101,6 @@ fn sidebar_entry_body_lines(
                 style: SidebarLineStyle::StatusIndicator(agent.status),
             });
         }
-    } else if let Some(preview) = sidebar_notification_preview(entry) {
-        for line in wrap_text_to_cells(&preview, cols, 4) {
-            lines.push(SidebarLine {
-                text: line,
-                style: SidebarLineStyle::Preview,
-            });
-        }
     }
 
     // Git branch line (always show separately when available)
@@ -250,40 +243,6 @@ fn sidebar_entry_path(entry: &WorkspaceEntry) -> Option<String> {
 
 fn sidebar_entry_secondary(entry: &WorkspaceEntry) -> Option<String> {
     format_listening_ports(&entry.listening_ports)
-}
-
-fn sidebar_notification_preview(entry: &WorkspaceEntry) -> Option<String> {
-    entry.latest_notification.as_ref().and_then(|notification| {
-        let collapsed = notification
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if collapsed.is_empty() {
-            return None;
-        }
-        // Don't show agent status messages when no agent is running —
-        // they're stale leftovers from a previous Claude Code session.
-        if entry.agent.is_none() && is_agent_status_message(&collapsed) {
-            return None;
-        }
-        Some(collapsed)
-    })
-}
-
-fn is_agent_status_message(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    lower.contains("claude is waiting")
-        || lower.contains("claude is working")
-        || lower.contains("claude finished")
-        || lower.contains("claude stopped")
-        || lower.contains("claude interrupted")
-        || lower.contains("claude notification")
-        || lower.contains("codex is waiting")
-        || lower.contains("codex is working")
-        || lower.contains("codex finished")
-        || lower.contains("codex stopped")
-        || lower.contains("codex interrupted")
-        || lower.contains("codex notification")
 }
 
 fn sidebar_entry_pull_request(entry: &WorkspaceEntry) -> Option<SidebarLine> {
@@ -970,7 +929,7 @@ mod test {
     }
 
     #[test]
-    fn notification_preview_wraps_before_meta() {
+    fn no_preview_when_agent_is_none() {
         let entry = WorkspaceEntry {
             name: "alpha".to_string(),
             title: "Claude Code".to_string(),
@@ -996,21 +955,10 @@ mod test {
             accent_color: None,
         };
 
+        // When no agent is running, stale notification previews are suppressed.
         assert_eq!(
             sidebar_entry_body_lines(&entry, 28, 28),
             vec![
-                SidebarLine {
-                    text: "Confirms it the file in the".to_string(),
-                    style: SidebarLineStyle::Preview,
-                },
-                SidebarLine {
-                    text: "bucket is truncated".to_string(),
-                    style: SidebarLineStyle::Preview,
-                },
-                SidebarLine {
-                    text: "unexpectedly".to_string(),
-                    style: SidebarLineStyle::Preview,
-                },
                 SidebarLine {
                     text: "\u{e0a0} main* \u{2022} /tmp/wezmux".to_string(),
                     style: SidebarLineStyle::Meta,
