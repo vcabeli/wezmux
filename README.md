@@ -65,7 +65,11 @@ support is published for them.
 
 ### Prerequisites
 
-- **Rust toolchain** — installed automatically via `rust-toolchain.toml` once rustup is present. To install rustup:
+- **Rust toolchain** — installed automatically via `rust-toolchain.toml` once rustup is present. Install via Homebrew:
+  ```bash
+  brew install rust
+  ```
+  Or via rustup:
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
@@ -127,3 +131,5 @@ end)
 ## Credits
 
 Built on top of [WezTerm](https://github.com/wezterm/wezterm) by [@wez](https://github.com/wez). All the heavy lifting (GPU renderer, terminal emulation, multiplexer) is WezTerm's.
+
+With Claude Code and Opus 4.6, a little bit of planning with [GSD](https://github.com/gsd-build/get-shit-done) and occasional Codex with GPT 5.4.
