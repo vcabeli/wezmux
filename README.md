@@ -128,6 +128,14 @@ pcall(function()
 end)
 ```
 
+## Documentation
+
+- [Sidebar](docs/sidebar.md) — what each card shows, interactions, and configuration
+- [Agent Integration](docs/agent-integration.md) — Claude Code, Codex, and custom agent hooks
+- [OSC 7777 Protocol](docs/osc7777.md) — structured agent status escape sequence reference
+- [Notifications](docs/notifications.md) — notification lifecycle and visual indicators
+- [Configuration](docs/config.md) — Lua config reference (sidebar colors, keyboard shortcuts)
+
 ## Credits
 
 Built on top of [WezTerm](https://github.com/wezterm/wezterm) by [@wez](https://github.com/wez). All the heavy lifting (GPU renderer, terminal emulation, multiplexer) is WezTerm's.

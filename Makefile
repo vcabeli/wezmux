@@ -1,6 +1,6 @@
 APP_DIR ?= /Applications/Wezmux.app
 
-.PHONY: all fmt build check test docs servedocs install bundle
+.PHONY: all fmt build check test install bundle
 
 all: build
 
@@ -29,12 +29,6 @@ build:
 
 fmt:
 	cargo +nightly fmt
-
-docs:
-	ci/build-docs.sh
-
-servedocs:
-	ci/build-docs.sh serve
 
 install:
 	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
