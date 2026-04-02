@@ -32,7 +32,7 @@ installed on the remote system in order to use SSH domains**.
 SSH domains are supported on all systems via libssh2.
 
 To configure an SSH domain, place something like the following in
-your `.wezterm.lua` file:
+your `.wezmux.lua` file (or `.wezterm.lua` for backwards compatibility):
 
 ```lua
 config.ssh_domains = {
@@ -183,7 +183,7 @@ config.unix_domains = {
 
 *Note: this only works with WSL 1. [WSL 2 doesn't support AF_UNIX interop](https://github.com/microsoft/WSL/issues/5961)*
 
-Inside your WSL instance, configure `.wezterm.lua` with this snippet:
+Inside your WSL instance, configure `.wezmux.lua` (or `.wezterm.lua`) with this snippet:
 
 ```lua
 config.unix_domains = {

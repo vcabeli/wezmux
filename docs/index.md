@@ -12,7 +12,10 @@ hide:
 ## Features
 
 * macOS-first workspace management for parallel coding-agent sessions
-* A persistent sidebar with git, PR, port, notification, and agent-status context
+* A persistent [sidebar](sidebar.md) with git, PR, port, notification, and agent-status context
+* Real-time [agent integration](agent-integration.md) for Claude Code, Codex, and other AI coding agents
+* A [notification system](notifications.md) with unread badges and per-pane tracking
+* Custom [OSC 7777](osc7777.md) protocol for structured agent status updates
 * [Multiplex terminal panes, tabs and windows on local and remote hosts, with native mouse and scrollback](multiplexing.md)
 * Font fallback, true color, hyperlinks, and the broader terminal foundation inherited from WezTerm
 * [A full list of inherited terminal features can be found here](features.md)

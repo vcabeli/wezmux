@@ -10,7 +10,7 @@ to make your own links.
 As an example, at my place of work many of our internal tools use `T123` to
 indicate task number 123 in our internal task tracking system.  It is desirable
 to make this clickable, and that can be done with the following configuration
-in your `~/.wezterm.lua`:
+in your `~/.wezmux.lua` (or `~/.wezterm.lua` for backwards compatibility):
 
 ```lua
 local wezterm = require 'wezterm'

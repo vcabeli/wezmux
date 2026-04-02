@@ -90,7 +90,7 @@ the worst cases spaces where a glyph should be, then you have an issue with
 font fallback.
 
 You can resolve this by explicitly adding fallback font(s) the have the glyphs
-that you need in your `.wezterm.lua`:
+that you need in your `.wezmux.lua` (or `.wezterm.lua` for backwards compatibility):
 
 ```lua
 local wezterm = require 'wezterm'

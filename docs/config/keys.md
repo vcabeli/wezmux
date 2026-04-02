@@ -1,7 +1,7 @@
 ## Configuring Key Assignments
 
 The default key table assignments can be overridden or extended using the
-`keys` section in your `~/.wezterm.lua` config file.  For example, you can
+`keys` section in your `~/.wezmux.lua` config file (or `~/.wezterm.lua` for backwards compatibility).  For example, you can
 disable a default assignment like this:
 
 ```lua

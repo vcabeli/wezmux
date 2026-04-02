@@ -101,7 +101,7 @@ for yourself.
 `cmd.exe` doesn't allow a lot of flexibility in configuring the prompt,
 but fortunately it does allow for emitting escape sequences.  You
 can use the `set_environment_variables` configuration to pre-configure
-the prompt environment in your `.wezterm.lua`; this example configures
+the prompt environment in your `.wezmux.lua` (or `.wezterm.lua`); this example configures
 the use of OSC 7 as well as including the time and current directory in
 the visible prompt with green and purple colors, and makes the prompt
 span multiple lines:
@@ -155,7 +155,7 @@ function Invoke-Starship-PreCommand {
 completions and autosuggestions to your Windows cmd.exe experience. If you
 haven't installed clink to be the global default on your system, you can
 configure wezterm to launch clink by setting the `default_prog` configuration
-in your `.wezterm.lua`; for example, if you have extracted clink to `c:\clink`
+in your `.wezmux.lua` (or `.wezterm.lua`); for example, if you have extracted clink to `c:\clink`
 you might configure this:
 
 ```lua

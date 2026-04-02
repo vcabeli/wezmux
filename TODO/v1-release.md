@@ -1,8 +1,8 @@
 # Wezmux Pre-v1.0 Release Checklist
 
-Updated: 2026-03-31
+Updated: 2026-04-02
 
-Status: P0 complete for the public macOS `v1.0` release path.
+Status: P0 complete. P1 has three open items blocking public v1.0.
 Verification:
 - `cargo test -p wezterm-gui workspace_config --bin wezterm-gui`
 - `cargo test -p wezterm-gui sidebar --bin wezterm-gui`
@@ -24,13 +24,22 @@ Verification:
 
 ## P1
 
-- [ ] Decide whether `~/.wezmux.lua` or `~/.wezterm.lua` is the single primary public config entrypoint, then make every doc and template say the same thing.
-- [ ] Ship dedicated Wezmux docs for the sidebar, OSC `7777`, notification flow, workspace metadata, and Claude/Codex integration hooks.
-- [ ] Close or consciously defer visible UI backlog before launch:
-  notification panel, bell action, settings action, context menu polish, workspace reordering, and Lua extensibility points.
+- [x] Fix config entrypoint inconsistency across inherited docs.
+  Updated 10 files (13 edits) to say `~/.wezmux.lua` with `~/.wezterm.lua` fallback.
+- [x] Ship dedicated Wezmux docs for the sidebar, OSC `7777`, notification flow, workspace metadata, and Claude/Codex integration hooks.
+  Added: `docs/sidebar.md`, `docs/osc7777.md`, `docs/notifications.md`, `docs/agent-integration.md`.
 - [ ] Reduce warning noise in key build targets so real regressions stand out in CI.
+  `wezterm-gui` itself is clean (4 warnings). The `window` crate produces ~205 inherited warnings that drown CI output.
+
+## Deferred (post-v1.0)
+
+- Context menu: rename action (close/move/color all done)
+- Workspace drag-reorder (context-menu move up/down works as interim)
+- Lua extensibility: sidebar position, poll intervals, card layout options, notification behavior, `format-sidebar-entry` event, `sidebar-entry-clicked` event
+- Dead code cleanup: `SidebarNotificationBell` and `SidebarSettings` enum variants and handlers (buttons removed from render path)
 
 ## Release Gate
 
-Public `v1.0` should not ship until all P0 items are complete and the
-Wezmux-specific test targets pass in CI for the supported macOS release path.
+Public `v1.0` should not ship until all P0 items are complete, the P1 config
+and docs items are addressed, and the Wezmux-specific test targets pass in CI
+for the supported macOS release path.

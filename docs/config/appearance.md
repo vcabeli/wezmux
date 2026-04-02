@@ -195,7 +195,7 @@ config.colors = {
 }
 ```
 
-### Defining a Color Scheme in your `.wezterm.lua`
+### Defining a Color Scheme in your `.wezmux.lua`
 
 If you'd like to keep a couple of color schemes handy in your configuration
 file, rather than filling out the `colors` section, place it in a

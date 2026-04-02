@@ -53,7 +53,7 @@ to launch it.  This example opens up a new terminal window running vim
 to edit your wezterm configuration:
 
 ```console
-$ wezterm start -- vim ~/.wezterm.lua
+$ wezterm start -- vim ~/.wezmux.lua
 ```
 
 ## Specifying the current working directory

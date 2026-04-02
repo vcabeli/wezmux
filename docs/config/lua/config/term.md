@@ -15,7 +15,7 @@ $ tempfile=$(mktemp) \
   && rm $tempfile
 ```
 
-You can then set `term = "wezterm"` in your `.wezterm.lua` config file.
+You can then set `term = "wezterm"` in your `.wezmux.lua` config file (or `.wezterm.lua` for backwards compatibility).
 
 Doing this will inform some software of newer, more advanced features such
 as colored underlines, styled underlines (eg: undercurl).  If the system

@@ -1,7 +1,7 @@
 
 ## Quick Start
 
-Create a file named `.wezterm.lua` in your home directory, with the following
+Create a file named `.wezmux.lua` (or `.wezterm.lua` for backwards compatibility) in your home directory, with the following
 contents:
 
 ```lua
@@ -39,8 +39,9 @@ For more details, see:
 configuration file using the logic shown below.
 
 !!! tip
-    The recommendation is to place your configuration file at `$HOME/.wezterm.lua`
-    (`%USERPROFILE%/.wezterm.lua` on Windows) to get started.
+    The recommendation is to place your configuration file at `$HOME/.wezmux.lua`
+    (`%USERPROFILE%/.wezmux.lua` on Windows) to get started. For backwards
+    compatibility, `$HOME/.wezterm.lua` is also supported as a fallback.
 
 More complex configurations that need to span multiple files can be placed in
 `$XDG_CONFIG_HOME/wezterm/wezterm.lua` (for X11/Wayland) or
@@ -62,7 +63,7 @@ graph TD
   J --> B
   H -->|No| K{{Does $HOME/.config/wezterm/wezterm.lua exist?}}
   K -->|Yes| B
-  K -->|No| J[Use $HOME/.wezterm.lua]
+  K -->|No| J[Use $HOME/.wezmux.lua<br/>falls back to $HOME/.wezterm.lua]
 ```
 {% endraw %}
 
