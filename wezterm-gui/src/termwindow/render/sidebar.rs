@@ -169,7 +169,10 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
 }
 
 fn working_spinner_frame(milliseconds: u128) -> &'static str {
-    const FRAMES: [&str; 4] = ["\u{25D0}", "\u{25D3}", "\u{25D1}", "\u{25D2}"];
+    const FRAMES: [&str; 10] = [
+        "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
+        "\u{2827}", "\u{2807}", "\u{280F}",
+    ];
     FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize]
 }
 
