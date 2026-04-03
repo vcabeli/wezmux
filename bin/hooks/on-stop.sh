@@ -27,8 +27,8 @@ if [ -n "$last_message" ]; then
     preview=$(echo "$last_message" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)
 fi
 
-# Strip escape/BEL to prevent OSC injection
-preview=$(printf '%s' "$preview" | tr -d '\007\033')
+# Strip escape/BEL/semicolons to prevent OSC injection
+preview=$(printf '%s' "$preview" | tr -d '\007\033;')
 
 # Structured status for agent store
 printf '\033]7777;status;idle\007' > /dev/tty 2>/dev/null || true

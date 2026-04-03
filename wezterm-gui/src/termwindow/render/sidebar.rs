@@ -329,6 +329,9 @@ fn text_element_fg(font: &Rc<LoadedFont>, text: &str, fg: LinearRgba) -> Element
 /// Parse a hex color string like "#ff6b6b" into LinearRgba.
 fn hex_to_linear(hex: &str) -> LinearRgba {
     let hex = hex.trim_start_matches('#');
+    if hex.len() < 6 {
+        return LinearRgba::with_srgba(128, 128, 128, 255);
+    }
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);

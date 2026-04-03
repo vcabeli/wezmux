@@ -22,7 +22,7 @@ Was it successful?
 
 If building from the git repo, did you update the submodules?  Not doing this
 is a common source of problems; see the information at
-<https://wezfurlong.org/wezterm/install/source.html> for more information.
+<https://github.com/vcabeli/wezmux#install> for more information.
 
 ## The build output
 

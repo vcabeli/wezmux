@@ -41,16 +41,17 @@ If you are new to the Rust language check out <https://doc.rust-lang.org/rust-by
 
 ### Where to find things?
 
-The `term` directory holds the core terminal model code. This is agnostic
-of any windowing system. If you want to add support for terminal escape
-sequences and that sort of thing, you probably want to be in the `term` directory.
-Keep in mind that for maximal compatibility and utility `wezterm` aims to
-be compatible with the `xterm` behavior.
-https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
+- `term/` — core terminal model code (escape sequences, terminal state)
+- `wezterm-gui/src/termwindow/` — GUI renderer and window management
+- `wezterm-gui/src/termwindow/sidebar.rs` — sidebar state and layout
+- `wezterm-gui/src/termwindow/render/sidebar.rs` — sidebar rendering
+- `mux/src/notification.rs` — notification store
+- `mux/src/agent_status.rs` — agent status store (OSC 7777)
+- `mux/src/lib.rs` — Mux singleton, workspace management, event routing
+- `bin/hooks/` — Claude Code and Codex hook scripts
 
-The `src` directory holds the code for the `wezterm` program. This is
-the GUI renderer for the terminal model.  If you want to change something
-about the GUI you want to be in the `src` dir.
+For terminal escape sequences, `wezterm` aims to be compatible with `xterm`.
+https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
 
 ### Iterating
 
@@ -72,14 +73,24 @@ $ cargo run
 This will produce a debug-instrumented binary with poor optimization. This will
 give you more detail in the backtrace produced if you run `RUST_BACKTRACE=1 cargo run`.
 
-If you get a panic and want to examine local variables, you'll need to use gdb:
+If you get a panic and want to examine local variables, use lldb:
 
 ```console
 $ cargo build
-$ gdb ./target/debug/wezterm
-$ break rust_panic               # hit tab to complete the name of the panic symbol!
-$ run
-$ bt
+$ lldb ./target/debug/wezterm-gui
+(lldb) breakpoint set --name rust_panic
+(lldb) run
+(lldb) bt
+```
+
+### Useful Makefile targets
+
+```console
+$ make build          # debug build
+$ make test           # run tests (uses nextest if available)
+$ make check          # cargo check all crates
+$ make bundle         # build release .app to target/Wezmux.app
+$ make install        # build and install to /Applications/Wezmux.app
 ```
 
 ### Please include tests to cover your changes!

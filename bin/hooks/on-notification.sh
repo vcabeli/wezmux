@@ -24,8 +24,8 @@ fi
 
 [ -z "$msg" ] && msg="Claude notification"
 
-# Strip escape/BEL to prevent OSC injection
-msg=$(printf '%s' "$msg" | tr -d '\007\033')
+# Strip escape/BEL/semicolons to prevent OSC injection
+msg=$(printf '%s' "$msg" | tr -d '\007\033;')
 
 # Detect "needs attention" notifications and promote to needs_input status.
 # Claude Code sends these when waiting for plan approval, tool permission, etc.

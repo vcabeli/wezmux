@@ -160,7 +160,8 @@ mod test {
         );
 
         assert!(store.has_unread(1));
-        assert_eq!(store.unread_count("alpha"), 2);
+        // Second add was deduped (same pane, title, body), so only 1 unread
+        assert_eq!(store.unread_count("alpha"), 1);
         assert_eq!(store.unread_count("beta"), 1);
 
         store.mark_pane_read(1);

@@ -1336,7 +1336,8 @@ impl TermWindow {
                 MuxNotification::TabTitleChanged { .. } => {
                     self.update_title_post_status();
                 }
-                MuxNotification::PaneRemoved(_) => {
+                MuxNotification::PaneRemoved(pane_id) => {
+                    self.sidebar.last_known_agents.remove(&pane_id);
                     self.schedule_sidebar_metadata_refresh();
                 }
                 MuxNotification::PaneAdded(_)

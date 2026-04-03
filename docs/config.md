@@ -69,6 +69,19 @@ Active card text is always white — it's derived automatically to ensure contra
 
 ## Keyboard shortcuts (default)
 
+### Wezmux workspace shortcuts
+
+| Key | Action |
+|-----|--------|
+| ``Option+` `` | Toggle Wezmux visibility (global hotkey) |
+| `Cmd+B` | Toggle sidebar |
+| `Option+K` | Switch to previous workspace |
+| `Option+J` | Switch to next workspace |
+| `Option+1..9` | Switch to workspace by index |
+| `Option+U` | Jump to last unread notification |
+
+### Standard shortcuts
+
 | Key | Action |
 |-----|--------|
 | `Cmd+D` | Split pane horizontally |
@@ -79,8 +92,7 @@ Active card text is always white — it's derived automatically to ensure contra
 | `Cmd+Shift+Left/Right` | Switch tabs |
 | `Cmd+K` | Clear scrollback |
 | `Cmd+F` | Find |
-| `Alt+`` ` | Toggle Wezmux visibility (global hotkey) |
 
 ## Other settings
 
-All standard [WezTerm configuration](https://wezfurlong.org/wezterm/config/files.html) works in `~/.wezmux.lua`. Wezmux will also read `~/.wezterm.lua` for compatibility, but `~/.wezmux.lua` is the preferred public entrypoint for Wezmux-specific configuration.
+All standard [WezTerm configuration](https://wezterm.org/config/files.html) works in `~/.wezmux.lua`. Wezmux will also read `~/.wezterm.lua` for compatibility, but `~/.wezmux.lua` is the preferred entrypoint for Wezmux-specific configuration.

@@ -1,6 +1,6 @@
 APP_DIR ?= /Applications/Wezmux.app
 
-.PHONY: all fmt build check test install bundle
+.PHONY: all fmt build check test install install-codex-hooks bundle
 
 all: build
 
@@ -48,8 +48,12 @@ install:
 	ln -s ../Resources/bin $(APP_DIR)/Contents/MacOS/bin
 	chmod +x $(APP_DIR)/Contents/Resources/bin/claude $(APP_DIR)/Contents/Resources/bin/hooks/*.sh $(APP_DIR)/Contents/Resources/bin/hooks/codex/*.sh $(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
 	xattr -cr $(APP_DIR)
-	$(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
 	@echo "Wezmux.app installed to $(APP_DIR)"
+	@echo ""
+	@echo "Optional: run 'make install-codex-hooks' to set up Codex integration"
+
+install-codex-hooks:
+	$(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
 
 bundle:
 	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
@@ -64,6 +68,6 @@ bundle:
 	cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns target/Wezmux.app/Contents/Resources/terminal.icns
 	cp -R bin target/Wezmux.app/Contents/Resources/bin
 	ln -s ../Resources/bin target/Wezmux.app/Contents/MacOS/bin
-	chmod +x target/Wezmux.app/Contents/Resources/bin/claude target/Wezmux.app/Contents/Resources/bin/hooks/*.sh
+	chmod +x target/Wezmux.app/Contents/Resources/bin/claude target/Wezmux.app/Contents/Resources/bin/hooks/*.sh target/Wezmux.app/Contents/Resources/bin/hooks/codex/*.sh target/Wezmux.app/Contents/Resources/bin/install-codex-hooks.sh
 	codesign --force --sign - target/Wezmux.app/Contents/MacOS/wezterm-gui
 	@echo "Wezmux.app bundle ready at target/Wezmux.app"

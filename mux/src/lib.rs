@@ -793,20 +793,30 @@ impl Mux {
                     }
                     "message" => {
                         if let Some(msg) = data {
-                            store.update_message(*pane_id, msg.clone());
+                            store.update_message(
+                                *pane_id,
+                                sanitize_notification_text(&msg),
+                            );
                         }
                     }
                     "tool" => {
                         if let Some(tool) = data {
-                            store.update_tool(*pane_id, tool.clone());
+                            store.update_tool(
+                                *pane_id,
+                                sanitize_notification_text(&tool),
+                            );
                         }
                     }
                     "clear" => store.clear(*pane_id),
                     _ => log::warn!("unknown wezmux status event: {event}"),
                 }
             }
-            MuxNotification::PaneFocused(pane_id) | MuxNotification::PaneRemoved(pane_id) => {
+            MuxNotification::PaneFocused(pane_id) => {
                 self.notification_store.lock().mark_pane_read(*pane_id);
+            }
+            MuxNotification::PaneRemoved(pane_id) => {
+                self.notification_store.lock().mark_pane_read(*pane_id);
+                self.agent_status_store.lock().remove(*pane_id);
             }
             _ => {}
         }

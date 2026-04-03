@@ -28,7 +28,7 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 
 **Agent integrations:**
 - **Claude Code** — hooks injected automatically via wrapper script (no setup needed)
-- **Codex** — hooks installed into `~/.codex/hooks.json` by `make install`
+- **Codex** — run `make install-codex-hooks` to set up hooks in `~/.codex/hooks.json`
 - Status, tool activity, and output previews shown in the sidebar for both
 
 **OSC 7777 agent status protocol** for structured status reporting:
@@ -100,7 +100,12 @@ git submodule update --init --recursive
 make install
 ```
 
-This builds release binaries, assembles `Wezmux.app`, ad-hoc codesigns the main binary, and installs to `/Applications/Wezmux.app`.
+This builds release binaries, assembles `Wezmux.app`, ad-hoc codesigns the main binary, and installs to `/Applications/Wezmux.app`. Claude Code hooks are injected automatically via the bundled wrapper script.
+
+To set up Codex integration (merges hooks into `~/.codex/hooks.json`):
+```bash
+make install-codex-hooks
+```
 
 To install to a custom location:
 ```bash
