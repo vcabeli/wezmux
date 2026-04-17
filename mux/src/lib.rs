@@ -807,6 +807,13 @@ impl Mux {
                             );
                         }
                     }
+                    "subagents" => {
+                        if let Some(count_str) = data.as_deref() {
+                            if let Ok(count) = count_str.parse::<u32>() {
+                                store.update_subagent_count(*pane_id, count);
+                            }
+                        }
+                    }
                     "clear" => store.clear(*pane_id),
                     _ => log::warn!("unknown wezmux status event: {event}"),
                 }

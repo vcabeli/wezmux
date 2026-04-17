@@ -33,6 +33,14 @@ preview=$(printf '%s' "$preview" | tr -d '\007\033;')
 # Structured status for agent store
 printf '\033]7777;status;idle\007' > /dev/tty 2>/dev/null || true
 printf '\033]7777;message;%s\007' "$preview" > /dev/tty 2>/dev/null || true
+# Subagent count is managed exclusively by on-subagent-start/stop hooks.
+# Claude Code's Stop hook input does not currently expose a reason field
+# (no stop_button/interrupt distinction — see anthropics/claude-code#9516),
+# so we can't safely force-reset here: a concurrent turn may legitimately
+# have background subagents still running.  When Claude Code exits entirely,
+# the sidebar's foreground-process check clears agent state via
+# mux.remove_agent_status().  Orphaned /tmp/wezmux-subagents-<session_id>
+# files from crashed sessions are harmless (unique session_id).
 # Notification store
 printf '\033]9;%s\007' "$msg" > /dev/tty 2>/dev/null || true
 exit 0

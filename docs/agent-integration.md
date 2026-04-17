@@ -62,6 +62,12 @@ This copies the hook scripts to `~/.claude/hooks/wezmux/` and prints the setting
         ],
         "PreToolUse": [
           { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-needs-input.sh", "timeout": 5 }] }
+        ],
+        "SubagentStart": [
+          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-subagent-start.sh", "timeout": 5 }] }
+        ],
+        "SubagentStop": [
+          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-subagent-stop.sh", "timeout": 5 }] }
         ]
       }
     }
@@ -75,6 +81,8 @@ This copies the hook scripts to `~/.claude/hooks/wezmux/` and prints the setting
 | `on-notification.sh` | Claude sends a notification | `message;...` + notification. Promotes "needs attention" messages to `status;needs_input` |
 | `on-needs-input.sh` | Claude asks a question (AskUserQuestion tool) | `status;needs_input` + notification |
 | `on-stop.sh` | Claude finishes a turn | `status;idle` + `message;...` (preview of Claude's response) + notification |
+| `on-subagent-start.sh` | Claude spawns a subagent | `subagents;N` (incremented count) |
+| `on-subagent-stop.sh` | A subagent completes | `subagents;N` (decremented count) |
 
 Each hook emits both OSC 7777 (for the agent status store) and OSC 9 (for the notification store), so the sidebar gets structured status and notification counts.
 

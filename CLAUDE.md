@@ -1,146 +1,200 @@
-<!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
-**Wezmux**
+**Wezmux** — a WezTerm fork that adds cmux-inspired workspace management for AI agent workflows.
 
-A fork of WezTerm that adds cmux-inspired workspace management: a persistent sidebar showing per-workspace metadata (git branch, PR status, ports, notifications) and an OSC-based notification system with visual indicators (blue rings on panes, sidebar badges). Built as a personal tool for managing multiple agent workspaces in a single terminal window.
+Persistent sidebar showing per-workspace metadata (git branch, PR status, ports, agent status, notifications) and an OSC-based notification system with visual indicators (blue rings on panes, sidebar badges). Built for managing multiple AI coding agents in a single terminal window.
 
-**Core Value:** See at a glance which workspace needs attention — the sidebar and notification rings must make it obvious where work is happening and where input is needed.
+**Core value:** See at a glance which workspace needs attention — the sidebar and notification rings make it obvious where work is happening and where input is needed.
 
-### Constraints
+**Platform:** macOS only (Cocoa + CGL/Metal backend).
 
-- **Platform**: macOS only for v1 (Cocoa + CGL backend)
-- **Renderer**: All UI must be drawn via WezTerm's custom renderer — no native widgets available
-- **Dependencies**: `gh` CLI may not be installed — PR status must degrade gracefully
-- **Performance**: Git/PR/port polling must never block the render thread
-- **Memory**: Notification store capped at ~1000 entries to prevent unbounded growth
-<!-- GSD:project-end -->
+## Build & Run
 
-<!-- GSD:stack-start source:research/STACK.md -->
-## Technology Stack
+```bash
+make install          # Release build → /Applications/Wezmux.app
+make bundle           # Release build → target/Wezmux.app (dev, no overwrite)
+make build            # Debug build (fast iteration)
+make test             # Uses cargo nextest if available, falls back to cargo test
+cargo build -p wezterm-gui   # Build just the GUI binary (fastest rebuild)
+cargo test -p mux            # Test a specific crate
+```
 
-## Recommended Stack
-### Core Technologies
-| Technology | Version (in WezTerm) | Purpose | Why Recommended |
-|------------|----------------------|---------|-----------------|
-| Rust (stable) | 1.75+ (inferred from wgpu 25) | Implementation language | The fork is Rust; no choice here. |
-| wgpu | 25.0.2 | GPU rendering backend (WebGPU/Metal/OpenGL abstraction) | Already used by WezTerm for its WebGPU front end. The sidebar must be drawn through this renderer — no native widget toolkit available. |
-| glium | 0.35 | OpenGL rendering backend (legacy path) | WezTerm supports both OpenGL (via glium) and WebGPU (via wgpu). The sidebar render path must work with both. |
-| euclid | 0.22.x | 2D geometry primitives (Point2D, Rect, Size2D) | Used throughout wezterm-gui for all coordinate math and layout rects. Required for `compute_element()` layout context. |
-| tokio | 1.43 | Async runtime for background polling tasks | Already the project's async runtime. Used for all I/O: git status polling, `gh` CLI subprocess calls, port scanning. |
-### Existing WezTerm Subsystems to Reuse (NOT External Dependencies)
-| Module | Location in Codebase | Purpose | Why Reuse (Not Replace) |
-|--------|----------------------|---------|-------------------------|
-| `box_model.rs` / `Element` / `ComputedElement` | `wezterm-gui/src/termwindow/box_model.rs` | CSS-like declarative layout engine | Powers the `fancy_tab_bar` already. Supports padding/margin/borders/colors/children. `compute_element()` resolves to pixel rects; `render_element()` emits draw calls. The sidebar uses the exact same builder pattern. |
-| `fancy_tab_bar.rs` render pattern | `wezterm-gui/src/termwindow/render/fancy_tab_bar.rs` | Reference implementation for box-model UI | The sidebar IS this pattern. Build element tree → `compute_element(&LayoutContext{..}, &root)` → `translate()` → `paint_*` → extract `ui_items()` for hit-testing. Study this file before writing a line of sidebar code. |
-| `UIItem` / `UIItemType` | `wezterm-gui/src/termwindow/mouseevent.rs` | Hit-region registration and mouse dispatch | The sidebar adds a new `UIItemType::Sidebar(SidebarItem)` variant. `TermWindow.ui_items: Vec<UIItem>` is populated each render frame; `resolve_ui_item()` tests clicks. |
-| `Mux` singleton | `mux/src/lib.rs` | Workspace and pane registry | `Mux::get()` for global access. `iter_workspaces()`, `iter_windows_in_workspace()`, `active_workspace()`, `set_active_workspace()`. Subscribe to `MuxNotification::ActiveWorkspaceChanged`, `PaneOutput`, `WindowCreated` etc. for reactive updates. |
-| `termwiz` OSC parser | `termwiz/src/escape/` | Escape sequence parsing | OSC 9 ("toast") and OSC 777 (`notify;title;body`) are already partially wired. The notification store hooks into this parser output — do NOT write a second OSC parser. |
-| `TermWindow` render loop | `wezterm-gui/src/termwindow/mod.rs` | Main render orchestration | Add sidebar rendering calls inside `do_paint_webgpu()` / `do_paint()`. The window layout calculation (content area shift) happens in `resize.rs`. |
-### Supporting Libraries (External Crates to Add)
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `parking_lot` | 0.12.x (already in wezterm-gui deps) | `Mutex` and `RwLock` for notification store | Use `parking_lot::Mutex` — it is 1.5–5x faster than `std::sync::Mutex` under contention, uses 1 byte, and is already a project dependency. The notification store (pane_id → Vec<Notification>) needs this. |
-| `dashmap` | 6.1.0 (stable) | Concurrent `HashMap` for metadata cache | Use for the workspace metadata cache (git branch, PR status, port list per workspace). Sharded locking allows polling threads to write individual workspace entries without blocking the render thread reading all entries. Do not use `Arc<RwLock<HashMap>>` — DashMap is the standard recommendation for this pattern. |
-| `async-channel` | 2.3 (already in workspace) | Unbounded MPSC from poll workers to notification store | Already in the workspace. Use `async_channel::bounded()` to deliver poll results back to the main async context without blocking. |
-### Development Tools
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `cargo build --package wezterm` | Build the GUI binary | The workspace root builds all crates; `--package wezterm` targets just the terminal binary. |
-| `RUST_LOG=wezterm_gui=debug` | Runtime logging during development | WezTerm uses the `log` crate throughout. Set this env var to see render-layer trace output. |
-| `cargo test -p wezterm-gui` | Unit tests for layout logic | The `box_model` and `UIItem` systems are unit-testable in isolation. Test sidebar layout math here. |
-| `cargo clippy --package wezterm-gui -- -D warnings` | Lint on every change | WezTerm's CI enforces clippy; keep the fork passing. |
-## Installation
-# Fork setup
-# Add dashmap (only new external dependency)
-# In wezterm-gui/Cargo.toml, add:
-# dashmap = { workspace = true }
-# In workspace Cargo.toml [workspace.dependencies], add:
-# dashmap = "6.1"
-# Build
-# Run
-## Alternatives Considered
-| Our Choice | Alternative | Why Not |
-|------------|-------------|---------|
-| `box_model.rs` + `ComputedElement` for sidebar layout | Build a new layout engine from scratch | `fancy_tab_bar.rs` already proves this system works for panel-style UI. Building a second layout engine doubles maintenance surface and risks rendering inconsistencies. |
-| `box_model.rs` + `ComputedElement` for sidebar layout | Ratatui or similar TUI framework | Ratatui targets character-grid terminals; WezTerm's renderer works at GPU quad level, not character level. Cannot mix the two systems — WezTerm draws ALL UI itself. |
-| `dashmap` for workspace metadata cache | `Arc<RwLock<HashMap>>` | DashMap's sharded locking avoids the single-lock bottleneck. Tokio's own docs recommend DashMap when HashMap access is frequent and fine-grained. |
-| `tokio::spawn` + `tokio::time::interval` for polling | A dedicated polling thread with `std::thread::sleep` | WezTerm is already tokio-runtime. Spawning std threads just to sleep introduces unnecessary overhead and breaks structured concurrency. Use `tokio::spawn(async { loop { interval.tick().await; ... } })`. |
-| `tokio::process::Command` for git/gh subprocess | `std::process::Command` in `spawn_blocking` | `tokio::process::Command` is non-blocking natively. `spawn_blocking` is appropriate only for truly CPU-bound sync code. Subprocess I/O is I/O-bound — use the async process API. |
-| `parking_lot::Mutex` for notification store | `tokio::sync::Mutex` | The notification store is accessed from synchronous render code and async poll code. `tokio::sync::Mutex` must only be held across `.await` points. The store's critical sections are short and synchronous — `parking_lot::Mutex` is correct and faster. |
-## What NOT to Use
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| **egui, iced, or any GUI framework** | WezTerm's renderer is a custom GPU pipeline. It does not embed a foreign widget system. Every pixel is drawn via quads/glyphs by `TermWindow`. Adding a second UI library would require either embedding a foreign OpenGL/wgpu context (nightmare) or rendering to a texture and blitting (unnecessary complexity). | `box_model.rs` + `Element` builder pattern — already in the codebase. |
-| **`std::sync::mpsc` for poll-to-render communication** | Standard `mpsc` blocks on `recv()`, which would stall the render thread. | `async-channel::bounded()` (already in workspace) or `tokio::sync::mpsc`. |
-| **Polling on the render thread** | Git/`gh`/port commands can take 200ms+. The render thread targets 60fps (16ms frames). Any blocking call will cause visible stuttering. | `tokio::spawn` background tasks that write results into a `DashMap`. The render thread only reads the cache; it never waits for I/O. |
-| **`dashmap` v7.0.0-rc2** | Release candidate — API may break. Version 6.1.0 is the current stable. | `dashmap = "6.1"` |
-| **Forking from the `20240203` tagged release** | The Feb 2024 release is the last tagged release but the `main` branch has ~14 months of additional commits. WezTerm uses nightly builds from `main` in practice. Fork from `main` HEAD to get current wgpu 25, tokio 1.43, and render fixes. | `git clone` from `main` branch. |
-| **Re-implementing OSC parsing** | `termwiz/src/escape/` already handles OSC 9 and OSC 777. Writing a parallel parser creates a second code path that will diverge. | Hook into the existing `MuxNotification::PaneOutput` subscription and intercept OSC events as they flow through the existing parser. |
-## Stack Patterns by Variant
-- Build a `Vec<Element>` representing workspace rows using the `Element::new(&font, ElementContent::Children(children))` pattern from `fancy_tab_bar.rs`
-- Call `compute_element(&layout_ctx, &root_element)` to get pixel-accurate `ComputedElement`
-- Call `render_element(...)` to emit draw calls
-- Extract `ui_items()` from `ComputedElement` and push into `TermWindow.ui_items`
-- Modify `wezterm-gui/src/termwindow/render/borders.rs` — this file already handles pane border drawing
-- Add a check: if `notification_store.has_unread(pane_id)`, override border color to blue
-- Keep the check O(1) via DashMap lookup — do not iterate the store during render
-- One `tokio::spawn` per workspace, refreshed every N seconds via `tokio::time::interval`
-- `tokio::process::Command::new("git")` with `output().await` — non-blocking
-- Write results to `Arc<DashMap<String, WorkspaceMetadata>>`
-- `TermWindow` reads the DashMap on each render frame — no locking stalls
-- `UIItemType::Sidebar(SidebarClick::WorkspaceEntry(name))` → `mouse_event_ui_item()` handler
-- Call `Mux::get().set_active_workspace(&name)` — this triggers `MuxNotification::ActiveWorkspaceChanged`, which the GUI already handles for tab switching
-## Version Compatibility
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `wgpu = "25.0.2"` | `tokio = "1.43"` | Both in the workspace; no conflicts. |
-| `dashmap = "6.1"` | `parking_lot = "0.12"` | DashMap 6.x uses parking_lot 0.12 internally for shard locks — versions must match or DashMap will compile its own. Pin workspace to `parking_lot = "0.12"`. |
-| `async-channel = "2.3"` | `tokio = "1.43"` | async-channel 2.x is runtime-agnostic; works with tokio without feature flags. |
-| `euclid = "0.22"` | All versions above | Geometry-only crate with no async dependencies. |
-## Sources
-- WezTerm workspace `Cargo.toml` (verified): tokio 1.43, wgpu 25.0.2, glium 0.35, async-channel 2.3, crossbeam 0.8 — HIGH confidence
-- `wezterm-gui/src/termwindow/box_model.rs` (verified via GitHub fetch): `Element`, `ComputedElement`, `compute_element()`, builder API — HIGH confidence
-- `wezterm-gui/src/termwindow/render/fancy_tab_bar.rs` (verified): `BoxDimension`, element tree construction, `compute_element()` render pipeline — HIGH confidence
-- `wezterm-gui/src/termwindow/mouseevent.rs` (verified): `UIItem`, `UIItemType` variants, `resolve_ui_item()`, extensibility via enum — HIGH confidence
-- `mux/src/lib.rs` (verified): `Mux::get()` singleton, workspace API, `MuxNotification` variants — HIGH confidence
-- `wezterm.org/escape-sequences.html` (verified): OSC 9 and OSC 777 notification support — HIGH confidence
-- `github.com/wezterm/wezterm/issues/6341` (verified): Project is active, nightly builds continue from `main`, last tagged release Feb 2024 but main has 14+ months of commits — HIGH confidence
-- DashMap 6.1.0 (verified via search + docs.rs): Latest stable; v7.0.0-rc2 exists but is pre-release — HIGH confidence
-- Tokio shared-state docs (official): `spawn_blocking` vs `tokio::process`, DashMap recommendation — HIGH confidence
-- parking_lot vs std Mutex analysis (2025, multiple sources): `parking_lot` recommended for contended short critical sections — MEDIUM confidence
-<!-- GSD:stack-end -->
+**IMPORTANT:** Always build and run `wezterm-gui`, never `wezterm`. The `wezterm` binary has a stale launch path that doesn't pick up changes.
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
+`make install` produces a full `.app` bundle with codesigned binary, hooks, and the `bin/claude` wrapper.
+
+## Architecture Overview
+
+### Wezmux additions to WezTerm
+
+| Component | Files | Purpose |
+|-----------|-------|---------|
+| **Sidebar** | `wezterm-gui/src/termwindow/sidebar.rs`, `render/sidebar.rs` | State management, metadata gathering, rendering |
+| **Agent status** | `mux/src/agent_status.rs` | State machine: Working/Idle/NeedsInput per pane |
+| **Notifications** | `mux/src/notification.rs` | Dedup store with unread tracking, capped at 1000 |
+| **OSC 7777** | `wezterm-escape-parser/src/osc.rs`, `term/src/terminal.rs` | Custom escape sequence for structured agent status |
+| **Workspace config** | `wezterm-gui/src/termwindow/workspace_config.rs` | Per-workspace display name, accent color, ordering |
+| **Session persistence** | `mux/src/session.rs` | Save/restore workspaces, scrollback, sidebar cache |
+| **Claude wrapper** | `bin/claude` | Auto-injects hooks into Claude Code via `--settings` |
+| **Hook scripts** | `bin/hooks/on-*.sh` | Emit OSC 7777 + OSC 9 on agent lifecycle events |
+| **PATH injection** | `mux/src/wezmux_zdotdir.rs` | Keeps `bin/` on PATH despite macOS `path_helper` |
+
+### Data flow: Agent status
+
+```
+Hook script (bash)
+  → printf '\033]7777;status;working\007' > /dev/tty
+  → termwiz OSC parser (wezterm-escape-parser/src/osc.rs)
+  → Alert::WezmuxStatus { event, data } (term/src/terminal.rs)
+  → MuxNotification::Alert dispatch (mux/src/lib.rs:775-820)
+  → AgentStatusStore.update_*() (mux/src/agent_status.rs)
+  → generation counter increments
+  → sidebar cache invalidated on next frame
+  → render/sidebar.rs rebuilds card with new status
+```
+
+### Data flow: Notifications
+
+```
+Hook script → printf '\033]9;message\007' > /dev/tty
+  → Alert::ToastNotification
+  → notification_store.add_notification()
+  → sidebar reads unread_count, shows badge
+```
+
+### Sidebar rendering pipeline
+
+Uses WezTerm's `box_model.rs` (same as `fancy_tab_bar.rs`):
+
+1. Build `Vec<Element>` tree (workspace cards, toolbar, new-workspace button)
+2. `compute_element()` → pixel-accurate layout
+3. `render_element()` → GPU quads
+4. Extract `UIItem`s → hit-testing for clicks/drag
+
+Sidebar width subtracts from terminal columns in `resize.rs`.
+
+### Sidebar metadata gathering
+
+Runs in a background thread, coalesced with 200ms delay:
+- **Git branch/dirty**: `libgit2` (via `git2` crate) — reads `.git/HEAD` and `repo.statuses()`
+- **PR status**: `gh pr view --json` subprocess — 60s refresh interval, degrades if `gh` missing
+- **Listening ports**: `lsof -nP -iTCP -sTCP:LISTEN` subprocess
+- **Agent status**: OSC 7777 (real-time, no polling)
+
+Results cached in `SidebarState.metadata` HashMap. Persisted to session file for fast restore.
+
+## The `bin/claude` wrapper
+
+When Wezmux launches a shell, it prepends `bin/` to PATH. This puts the `bin/claude` wrapper ahead of the real `claude` binary.
+
+The wrapper:
+1. Detects if running inside Wezmux (`WEZMUX=1` env var)
+2. If yes, injects all hook scripts via `--settings` JSON (Stop, Notification, UserPromptSubmit, PreToolUse, SubagentStart, SubagentStop)
+3. If user already passed `--settings`, passes through unchanged
+4. Outside Wezmux, passes through to real `claude` binary unchanged
+
+**When adding new Claude Code hooks:** add the script to `bin/hooks/` AND add the entry to the settings JSON in `bin/claude`. No manual `~/.claude/settings.json` setup is needed — the wrapper handles everything automatically.
+
+## OSC 7777 Protocol
+
+```
+ESC ] 7777 ; EVENT ; DATA BEL
+```
+
+| Event | Data | Effect |
+|-------|------|--------|
+| `status` | `working\|idle\|needs_input` | Updates agent status indicator |
+| `message` | text | Sets preview text on workspace card |
+| `tool` | tool name | Reports current tool (cached) |
+| `subagents` | count (integer) | Shows "N background tasks" line |
+| `clear` | (none) | Resets to idle, preserves last message |
+
+State machine guards in `AgentStatusStore`:
+- `needs_input` is sticky for 3 seconds (guards Stop/Notification hook race)
+- `working` always overrides `needs_input` (user answered)
+- Entering `working` clears message but keeps `last_working_message` as fallback
+
+## Key modules
+
+### `mux/src/agent_status.rs`
+`AgentStatusStore` — HashMap<PaneId, AgentPaneStatus> with generation counter. Short `parking_lot::Mutex` critical sections (accessed from both sync render code and async poll code). 20 unit tests covering all state transitions.
+
+### `mux/src/notification.rs`
+`NotificationStore` — VecDeque with dedup, per-pane and per-workspace unread counts. Capped at 1000 entries.
+
+### `wezterm-gui/src/termwindow/sidebar.rs`
+`SidebarState` — metadata cache, refresh scheduling, agent detection via process tree scanning, cached entry invalidation via generation counters.
+
+`WorkspaceEntry` — the data model for a single sidebar card: name, title, CWD, git info, PR, ports, agent info, notifications, accent color.
+
+`build_agent_info()` — merges process detection + OSC 7777 data + cached agent type into `AgentInfo`.
+
+### `wezterm-gui/src/termwindow/render/sidebar.rs`
+`paint_sidebar()` — full render pipeline. `sidebar_entry_body_lines()` builds the line list for each card (agent status, background tasks, git branch, PR, ports).
+
+### `wezterm-gui/src/termwindow/workspace_config.rs`
+Per-workspace customizations persisted to `~/.config/wezmux/workspaces.json`. Display name, accent color (#RRGGBB), ordering. Atomic writes via temp file + rename.
+
+### `mux/src/session.rs`
+Session save/restore to `~/.local/share/wezterm/session/session.json`. Includes sidebar metadata cache, scrollback (zstd-compressed), window layout.
+
+## Configuration
+
+Lua config: `~/.wezterm.lua` or `~/.config/wezterm/wezterm.lua` (hot-reloaded).
+
+Wezmux-specific config fields:
+```lua
+config.sidebar = {
+  visible = true,        -- toggle: Cmd+B
+  width = "280px",       -- Dimension (px, %, cell)
+  colors = {
+    bg = "#3a3a41",
+    card_bg = "#303036",
+    card_hover = "#44444b",
+    accent = "#0091ff",
+    text = "rgba(255,255,255,0.9)",
+    muted = "rgba(255,255,255,0.55)",
+    separator = "rgba(255,255,255,0.1)",
+    pr_open = "#b860ff",
+    pr_merged = "#4cc57c",
+    pr_closed = "#d76a6a",
+  },
+}
+```
+
+## Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `WEZMUX=1` | Set by Wezmux in spawned shells; triggers hook injection in `bin/claude` |
+| `WEZMUX_BIN` | Path to Wezmux `bin/` directory; prepended to PATH |
+| `_WEZMUX_REAL_ZDOTDIR` | Original ZDOTDIR saved when PATH wrapper applied |
+| `RUST_LOG=wezterm_gui=debug` | Debug logging for render/sidebar layer |
+
+## Mouse interaction
+
+Right-click on workspace card opens native context menu:
+- Color picker (8 presets + reset)
+- Move up/down/top/bottom
+- Close workspace
+
+Left-click switches workspace. Drag on right edge resizes sidebar.
+
+Hit-testing via `UIItemType` variants: `SidebarWorkspace`, `SidebarNewWorkspace`, `SidebarResizeHandle`, `SidebarSplitHorizontal`, `SidebarSplitVertical`, `SidebarBackground`.
+
+## Constraints
+
+- **Renderer**: All UI drawn via WezTerm's custom GPU renderer — no native widgets, no egui/iced
+- **Dependencies**: `gh` CLI may not be installed — PR status degrades gracefully
+- **Performance**: Git/PR/port polling must never block the render thread (background thread + cache pattern)
+- **Memory**: Notification store capped at 1000 entries
+- **Hooks**: Each hook invocation is a separate process — no shared state between hook calls (use temp files for coordination, e.g. subagent counting)
+
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
-
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
-## Architecture
-
-Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
-
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
-
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
-
-Use these entry points:
-- `/gsd:quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd:debug` for investigation and bug fixing
-- `/gsd:execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd:profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+- Follow existing WezTerm code style (rustfmt, clippy clean)
+- New sidebar data: add field to `WorkspaceMetadata` or `AgentInfo` → `WorkspaceEntry` → `sidebar_entry_body_lines()` → render
+- New OSC 7777 events: add match arm in `mux/src/lib.rs` dispatch + method in `AgentStatusStore`
+- New hooks: add script to `bin/hooks/` + wire in `bin/claude` settings JSON
+- Sidebar cache persistence: extend `SidebarCacheSerde` in `mux/src/session.rs`
+- Tests go inline at bottom of module file

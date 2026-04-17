@@ -93,6 +93,8 @@ pub struct AgentInfo {
     pub display_name: String,
     pub status: AgentStatus,
     pub status_message: Option<String>,
+    /// Number of subagents running within this agent session.
+    pub subagent_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -826,6 +828,11 @@ fn build_agent_info(
 
     let agent_type = agent_type?;
 
+    let subagent_count = pane_status
+        .as_ref()
+        .map(|s| s.subagent_count)
+        .unwrap_or(0);
+
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
             mux::agent_status::AgentStatus::Working => AgentStatus::Working,
@@ -860,6 +867,7 @@ fn build_agent_info(
         agent_type,
         status,
         status_message,
+        subagent_count,
     })
 }
 

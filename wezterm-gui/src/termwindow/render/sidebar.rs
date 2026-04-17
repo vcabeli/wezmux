@@ -101,6 +101,17 @@ fn sidebar_entry_body_lines(
                 style: SidebarLineStyle::StatusIndicator(agent.status),
             });
         }
+        if agent.subagent_count > 0 {
+            let noun = if agent.subagent_count == 1 {
+                "background task"
+            } else {
+                "background tasks"
+            };
+            lines.push(SidebarLine {
+                text: format!("  \u{2937} {} {noun}", agent.subagent_count),
+                style: SidebarLineStyle::Secondary,
+            });
+        }
     }
 
     // Git branch line (always show separately when available)

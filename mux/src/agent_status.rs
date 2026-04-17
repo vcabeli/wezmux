@@ -18,6 +18,9 @@ pub struct AgentPaneStatus {
     /// Preserved across status transitions so the sidebar keeps showing
     /// useful output even after the agent goes idle.
     pub last_working_message: Option<String>,
+    /// Number of subagents currently running within this agent session
+    /// (e.g. Claude Code's parallel Agent tool invocations).
+    pub subagent_count: u32,
     pub updated: Instant,
 }
 
@@ -37,6 +40,7 @@ impl AgentStatusStore {
                 message: None,
                 tool: None,
                 last_working_message: None,
+                subagent_count: 0,
                 updated: Instant::now(),
             });
         // Guard against the Stop/Notification hook race: when Claude stops
@@ -77,6 +81,7 @@ impl AgentStatusStore {
                 message: None,
                 tool: None,
                 last_working_message: None,
+                subagent_count: 0,
                 updated: Instant::now(),
             });
         entry.message = Some(message);
@@ -90,6 +95,23 @@ impl AgentStatusStore {
             entry.updated = Instant::now();
             self.generation += 1;
         }
+    }
+
+    pub fn update_subagent_count(&mut self, pane_id: PaneId, count: u32) {
+        let entry = self
+            .statuses
+            .entry(pane_id)
+            .or_insert_with(|| AgentPaneStatus {
+                status: AgentStatus::Working,
+                message: None,
+                tool: None,
+                last_working_message: None,
+                subagent_count: 0,
+                updated: Instant::now(),
+            });
+        entry.subagent_count = count;
+        entry.updated = Instant::now();
+        self.generation += 1;
     }
 
     pub fn clear(&mut self, pane_id: PaneId) {

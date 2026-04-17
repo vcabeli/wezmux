@@ -79,6 +79,28 @@ SETTINGS_JSON=$(cat <<'ENDJSON'
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-subagent-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-subagent-stop.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
