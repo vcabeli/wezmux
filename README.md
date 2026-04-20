@@ -21,10 +21,10 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 - Agent status line (via OSC 7777)
 - Unread notification badges
 
-**Notification system** with visual indicators:
+**Notification tracking** (on top of WezTerm's existing OSC 9 toasts):
 - Blue ring on panes with unread notifications
-- Badge counts in the sidebar
-- Toast-style notifications via OSC 9 / OSC 777
+- Unread badge counts in the sidebar
+- `Option+U` to jump to the last unread notification
 
 **Agent integrations:**
 - **Claude Code** — hooks injected automatically via wrapper script (no setup needed)
