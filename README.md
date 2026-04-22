@@ -42,11 +42,6 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 - Scrollback history with ANSI colors
 - Sidebar metadata cache (no blank-state flash on relaunch)
 
-**Workspace management:**
-- Deterministic workspace naming
-- "New workspace" button pinned to sidebar bottom
-- Click sidebar entries to switch workspaces
-
 **Keyboard shortcuts:**
 | Shortcut | Action |
 |----------|--------|
