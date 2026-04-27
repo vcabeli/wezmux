@@ -68,8 +68,45 @@ jobs:
           name: Wezmux-macos-${{ matrix.arch }}
           path: Wezmux-macos-${{ matrix.arch }}.zip
 
+  build-windows:
+    runs-on: windows-2022
+
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_WINDOWS_PATH_ADD_BIN: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+          cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+
+      - name: Package zip
+        shell: pwsh
+        run: ./ci/package-windows.ps1 -ZipName Wezmux-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wezmux-windows-x64
+          path: Wezmux-windows-x64.zip
+
   release:
-    needs: build-macos
+    needs:
+      - build-macos
+      - build-windows
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -81,4 +118,5 @@ jobs:
           files: |
             Wezmux-macos-arm64/Wezmux-macos-arm64.zip
             Wezmux-macos-x86_64/Wezmux-macos-x86_64.zip
+            Wezmux-windows-x64/Wezmux-windows-x64.zip
           generate_release_notes: true
