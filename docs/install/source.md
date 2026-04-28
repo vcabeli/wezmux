@@ -1,9 +1,9 @@
 ## Installing from source
 
 If you want to work from the repository directly, you can build Wezmux from
-source. Public `v1.0` support is macOS-only; source builds on other platforms
-should be treated as best-effort while the inherited upstream packaging is
-being adapted.
+source. Public `v1.0` support is macOS-first, with Windows preview builds
+available as zip artifacts. Other platforms should be treated as best-effort
+while the inherited upstream packaging is being adapted.
 
 * Install `rustup` to get the `rust` compiler installed on your system.
   [Install rustup](https://www.rust-lang.org/en-US/install.html).

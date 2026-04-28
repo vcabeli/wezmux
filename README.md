@@ -53,10 +53,9 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 
 ## Install
 
-Public Wezmux `v1.0` support is currently macOS-only. The source tree still
-contains inherited upstream cross-platform code, but builds outside the
-documented macOS path should be treated as best-effort until Wezmux-specific
-support is published for them.
+Public Wezmux `v1.0` support is macOS-first. Windows builds are available as a
+preview zip from CI/release artifacts while installer and agent-hook automation
+are still being adapted.
 
 ### Prerequisites
 
@@ -106,6 +105,12 @@ To install to a custom location:
 ```bash
 APP_DIR=~/Applications/Wezmux.app make install
 ```
+
+### Windows preview
+
+Download `Wezmux-windows-x64.zip` from a release or CI artifact, extract it, and
+run `wezterm-gui.exe`. The preview zip does not install shell integrations,
+PATH entries, or agent hook wrappers.
 
 ### Development build
 

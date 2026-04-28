@@ -13,8 +13,8 @@ changelog
 Wezmux public releases use semantic versioning and git tags of the form
 `vMAJOR.MINOR.PATCH`.
 
-Current public support is macOS-first while the inherited upstream
-cross-platform packaging is being adapted to Wezmux.
+Current public support is macOS-first, with Windows preview zip artifacts while
+the inherited upstream cross-platform packaging is being adapted to Wezmux.
 
 ### 1.0.0
 
@@ -2514,4 +2514,3 @@ font_hinting = "Full" # None, Vertical, VerticalSubpixel, Full
 * `wezterm imgcat /some/image.png` to display images inline in the terminal using the iTerm2 image protocol
 * IME support on macOS and Windows systems
 * Automatic fallback to software rendering if no GPU is available (eg: certain types of remote desktop sessions)
-
