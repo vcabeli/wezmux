@@ -1,13 +1,19 @@
 local wezterm = require 'wezterm'
 local config = wezterm.config_builder()
+local target_triple = wezterm.target_triple or ''
+local is_windows = target_triple:find('windows') ~= nil
 
-config.font = wezterm.font('Menlo')
+if is_windows then
+  config.font = wezterm.font('JetBrains Mono')
+else
+  config.font = wezterm.font('Menlo')
+  config.macos_window_background_blur = 20
+end
 config.font_size = 14
 
 config.color_scheme = 'Monokai (terminal.sexy)'
 
 config.window_background_opacity = 0.9
-config.macos_window_background_blur = 20
 
 config.hide_tab_bar_if_only_one_tab = true
 
@@ -31,28 +37,31 @@ config.inactive_pane_hsb = {
 }
 
 local act = wezterm.action
+local primary_mod = is_windows and 'CTRL|SHIFT' or 'SUPER'
+local secondary_mod = is_windows and 'CTRL|ALT' or 'SUPER|SHIFT'
+
 config.keys = {
-  -- Pane splitting (iTerm2: Cmd+D = side by side, Cmd+Shift+D = top/bottom)
-  { key = 'd', mods = 'SUPER',       action = act.SplitHorizontal { domain = 'CurrentPaneDomain' } },
-  { key = 'd', mods = 'SUPER|SHIFT', action = act.SplitVertical   { domain = 'CurrentPaneDomain' } },
+  -- Pane splitting
+  { key = 'd', mods = primary_mod,   action = act.SplitHorizontal { domain = 'CurrentPaneDomain' } },
+  { key = 'd', mods = secondary_mod, action = act.SplitVertical   { domain = 'CurrentPaneDomain' } },
 
-  -- Pane navigation (iTerm2: Cmd+[ / Cmd+])
-  { key = '[', mods = 'SUPER', action = act.ActivatePaneDirection 'Prev' },
-  { key = ']', mods = 'SUPER', action = act.ActivatePaneDirection 'Next' },
+  -- Pane navigation
+  { key = '[', mods = primary_mod, action = act.ActivatePaneDirection 'Prev' },
+  { key = ']', mods = primary_mod, action = act.ActivatePaneDirection 'Next' },
 
-  -- Close pane/tab (iTerm2: Cmd+W)
-  { key = 'w', mods = 'SUPER', action = act.CloseCurrentPane { confirm = false } },
+  -- Close pane/tab
+  { key = 'w', mods = primary_mod, action = act.CloseCurrentPane { confirm = false } },
 
-  -- Tabs (iTerm2: Cmd+T, Cmd+Left/Right)
-  { key = 't',          mods = 'SUPER',       action = act.SpawnTab 'CurrentPaneDomain' },
-  { key = 'LeftArrow',  mods = 'SUPER|SHIFT', action = act.ActivateTabRelative(-1) },
-  { key = 'RightArrow', mods = 'SUPER|SHIFT', action = act.ActivateTabRelative(1) },
+  -- Tabs
+  { key = 't',          mods = primary_mod,   action = act.SpawnTab 'CurrentPaneDomain' },
+  { key = 'LeftArrow',  mods = secondary_mod, action = act.ActivateTabRelative(-1) },
+  { key = 'RightArrow', mods = secondary_mod, action = act.ActivateTabRelative(1) },
 
-  -- Clear scrollback (iTerm2: Cmd+K)
-  { key = 'k', mods = 'SUPER', action = act.ClearScrollback 'ScrollbackAndViewport' },
+  -- Clear scrollback
+  { key = 'k', mods = primary_mod, action = act.ClearScrollback 'ScrollbackAndViewport' },
 
-  -- Find (iTerm2: Cmd+F)
-  { key = 'f', mods = 'SUPER', action = act.Search { CaseInSensitiveString = '' } },
+  -- Find
+  { key = 'f', mods = primary_mod, action = act.Search { CaseInSensitiveString = '' } },
 }
 
 return config

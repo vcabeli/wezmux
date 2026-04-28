@@ -1,0 +1,60 @@
+name: windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/windows.yml"
+      - "assets/windows/**"
+      - "ci/package-windows.ps1"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/windows.yml"
+      - "assets/windows/**"
+      - "ci/package-windows.ps1"
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_WINDOWS_PATH_ADD_BIN: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+          cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+
+      - name: Package zip
+        shell: pwsh
+        run: ./ci/package-windows.ps1 -ZipName Wezmux-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wezmux-windows-x64
+          path: Wezmux-windows-x64.zip

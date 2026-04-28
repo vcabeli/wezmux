@@ -1,6 +1,7 @@
 ## Installing on macOS
 
-Public Wezmux releases currently support macOS only.
+Public Wezmux releases are macOS-first. Windows preview builds are published as
+zip artifacts while the installer path is being adapted.
 
 Release automation builds and packages a universal `Wezmux.app` bundle for
 Apple Silicon and Intel Macs. Older macOS versions may work, but the supported
@@ -23,6 +24,6 @@ path for `v1.0.x` is the current macOS release line tested by the project.
    export PATH
    ```
 5. Configuration instructions can be [found here](../config/files.md).
-6. Homebrew, MacPorts, and non-macOS packaging paths are still being adapted
-   from upstream WezTerm and are not part of the public Wezmux `v1.0` support
-   contract yet.
+6. Homebrew, MacPorts, Linux, BSD, and Windows installer paths are still being
+   adapted from upstream WezTerm and are not part of the public Wezmux `v1.0`
+   support contract yet.
