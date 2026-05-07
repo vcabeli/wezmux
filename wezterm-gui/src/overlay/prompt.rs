@@ -82,6 +82,41 @@ pub fn show_line_prompt_overlay(
     Ok(())
 }
 
+pub fn show_workspace_nickname_prompt_overlay(
+    mut term: TermWizTerminal,
+    workspace: String,
+    initial: Option<String>,
+    window: GuiWin,
+) -> anyhow::Result<()> {
+    term.no_grab_mouse_in_raw_mode();
+    term.render(&[Change::Text(format!(
+        "Set a nickname for workspace `{}`.\r\nLeave blank to clear and revert to the original name.\r\nPress Esc to cancel.\r\n",
+        workspace
+    ))])?;
+
+    let mut host = PromptHost::new();
+    let mut editor = LineEditor::new(&mut term);
+    editor.set_prompt("nickname> ");
+    let line = editor.read_line_with_optional_initial_value(&mut host, initial.as_deref())?;
+
+    promise::spawn::spawn_into_main_thread(async move {
+        // None = user pressed Esc → leave settings unchanged.
+        // Some(empty) = user submitted blank → clear nickname.
+        // Some(text) = user submitted a value → set nickname.
+        if let Some(value) = line {
+            window
+                .window
+                .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
+                    term_window.apply_workspace_nickname(workspace, value);
+                })));
+        }
+        anyhow::Result::<()>::Ok(())
+    })
+    .detach();
+
+    Ok(())
+}
+
 pub fn show_new_workspace_prompt_overlay(
     mut term: TermWizTerminal,
     window: GuiWin,

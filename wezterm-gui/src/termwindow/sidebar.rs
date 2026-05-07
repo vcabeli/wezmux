@@ -11,6 +11,7 @@ use url::Url;
 use window::WindowOps;
 
 use crate::frontend::WorkspaceSwitcher;
+use crate::scripting::guiwin::GuiWin;
 use crate::spawn::SpawnWhere;
 use procinfo::LocalProcessInfo;
 use std::sync::Arc;
@@ -219,6 +220,8 @@ pub struct WorkspaceEntry {
     pub foreground_process_name: Option<String>,
     /// Custom accent color from workspace config (hex string like "#ff6b6b").
     pub accent_color: Option<String>,
+    /// Custom emoji from workspace config, shown next to the title.
+    pub emoji: Option<String>,
 }
 
 pub fn configured_pixel_width(config: &ConfigHandle, context: DimensionContext) -> usize {
@@ -459,6 +462,7 @@ impl crate::TermWindow {
                     title
                 };
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
+                let emoji = self.sidebar.workspace_configs.emoji(&name);
 
                 // Extract foreground process name for icon display
                 let foreground_process_name = active_pane_process_info.as_ref().and_then(|info| {
@@ -488,6 +492,7 @@ impl crate::TermWindow {
                     agent,
                     foreground_process_name,
                     accent_color,
+                    emoji,
                 }
             })
             .collect();
@@ -556,7 +561,8 @@ impl crate::TermWindow {
 
     /// Handle a native context menu selection.
     /// Tags: 1=Rename, 2=MoveUp, 3=MoveDown, 4=MoveToTop, 5=MoveToBottom,
-    ///        6=Close, 100=ColorReset, 101-108=Color swatches
+    ///        6=Close, 100=ColorReset, 101-108=Color swatches,
+    ///        200=EmojiReset, 201+=Emoji presets
     pub fn handle_context_menu_selection(&mut self, tag: usize, window: &::window::Window) {
         let workspace = match self.sidebar.context_menu_workspace.take() {
             Some(name) => name,
@@ -566,8 +572,14 @@ impl crate::TermWindow {
         const COLOR_HEXES: &[&str] = &[
             "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
         ];
+        let emoji_presets = super::mouseevent::EMOJI_PRESETS;
 
         match tag {
+            1 => {
+                self.show_workspace_nickname_prompt(workspace.clone());
+                // The prompt handles its own save + invalidate when the user submits.
+                return;
+            }
             2 => {
                 let all = Mux::get().iter_workspaces();
                 self.sidebar.workspace_configs.move_up(&workspace, &all);
@@ -600,6 +612,19 @@ impl crate::TermWindow {
                     self.sidebar
                         .workspace_configs
                         .set_accent_color(&workspace, Some(hex.to_string()));
+                }
+            }
+            200 => {
+                self.sidebar
+                    .workspace_configs
+                    .set_emoji(&workspace, None);
+            }
+            tag if tag >= 201 && tag < 201 + emoji_presets.len() => {
+                let idx = tag - 201;
+                if let Some(emoji) = emoji_presets.get(idx) {
+                    self.sidebar
+                        .workspace_configs
+                        .set_emoji(&workspace, Some((*emoji).to_string()));
                 }
             }
             _ => {}
@@ -637,6 +662,59 @@ impl crate::TermWindow {
             mux.kill_window(window_id);
         }
         self.sidebar.workspace_configs.remove_workspace(workspace);
+    }
+
+    /// Open a single-line prompt overlay so the user can set a custom display
+    /// name (nickname) for the given workspace. An empty submission clears the
+    /// override; pressing Esc leaves it unchanged.
+    pub fn show_workspace_nickname_prompt(&mut self, workspace: String) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let initial = self
+            .sidebar
+            .workspace_configs
+            .workspaces
+            .get(&workspace)
+            .and_then(|c| c.display_name.clone());
+
+        let gui_win = GuiWin::new(self);
+        let workspace_for_overlay = workspace.clone();
+
+        let (overlay, future) = crate::overlay::start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::prompt::show_workspace_nickname_prompt_overlay(
+                term,
+                workspace_for_overlay,
+                initial,
+                gui_win,
+            )
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
+    /// Called from the prompt overlay when the user submits a nickname value.
+    /// `value` is the raw submitted string; empty/whitespace-only clears.
+    pub fn apply_workspace_nickname(&mut self, workspace: String, value: String) {
+        let trimmed = value.trim();
+        let display_name = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        self.sidebar
+            .workspace_configs
+            .set_display_name(&workspace, display_name);
+        if let Err(e) = self.sidebar.workspace_configs.save() {
+            log::error!("Failed to save workspace configs: {:#}", e);
+        }
+        self.sidebar.invalidate_cache();
+        if let Some(window) = self.window.as_ref() {
+            window.invalidate();
+        }
     }
 
     pub fn show_new_workspace_prompt(&mut self) {
