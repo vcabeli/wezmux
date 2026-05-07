@@ -930,6 +930,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             doc: "Scales the font size smaller by 10%".into(),
             keys: vec![
                 (Modifiers::SUPER, "-".into()),
+                (Modifiers::SUPER.union(Modifiers::SHIFT), "-".into()),
                 (Modifiers::CTRL, "-".into()),
             ],
             args: &[ArgType::ActiveWindow],
@@ -941,6 +942,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             doc: "Scales the font size larger by 10%".into(),
             keys: vec![
                 (Modifiers::SUPER, "=".into()),
+                (Modifiers::SUPER.union(Modifiers::SHIFT), "=".into()),
                 (Modifiers::CTRL, "=".into()),
             ],
             args: &[ArgType::ActiveWindow],
