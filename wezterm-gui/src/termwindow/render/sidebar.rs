@@ -349,6 +349,15 @@ fn hex_to_linear(hex: &str) -> LinearRgba {
     LinearRgba::with_srgba(r, g, b, 255)
 }
 
+fn tint_linear(bg: LinearRgba, accent: LinearRgba, t: f32) -> LinearRgba {
+    LinearRgba(
+        bg.0 + t * (accent.0 - bg.0),
+        bg.1 + t * (accent.1 - bg.1),
+        bg.2 + t * (accent.2 - bg.2),
+        bg.3 + t * (accent.3 - bg.3),
+    )
+}
+
 /// Build an Element tree for one workspace card.
 fn build_card_element(
     font: &Rc<LoadedFont>,
@@ -365,6 +374,8 @@ fn build_card_element(
     let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
     let card_bg = if is_active {
         custom_accent_bg.unwrap_or(theme.card_active)
+    } else if let Some(accent) = custom_accent_bg {
+        tint_linear(theme.card_bg, accent, 0.18)
     } else {
         theme.card_bg
     };
@@ -377,7 +388,7 @@ fn build_card_element(
     let mut card_children: Vec<Element> = vec![];
 
     // Title line (with optional unread badge prefix and nerd font icon)
-    let title_text = if let Some(ref agent) = entry.agent {
+    let base_title = if let Some(ref agent) = entry.agent {
         format!(
             "{} {}",
             sidebar_agent_title_icon(agent, milliseconds),
@@ -391,6 +402,10 @@ fn build_card_element(
         format!("{} {}", icon, entry.title)
     } else {
         entry.title.clone()
+    };
+    let title_text = match entry.emoji.as_deref() {
+        Some(emoji) => format!("{} {}", base_title, emoji),
+        None => base_title,
     };
 
     let mut title_parts: Vec<Element> = vec![];
@@ -490,9 +505,14 @@ fn build_card_element(
         } else {
             BorderColor::default()
         };
+        let hover_bg = if let Some(accent) = custom_accent {
+            tint_linear(theme.card_hover, accent, 0.28)
+        } else {
+            theme.card_hover
+        };
         Some(ElementColors {
             border: hover_border,
-            bg: theme.card_hover.into(),
+            bg: hover_bg.into(),
             text: InheritableColor::Inherited,
         })
     } else {
@@ -928,14 +948,111 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        SidebarLine, SidebarLineStyle, format_listening_ports, sidebar_entry_body_lines,
-        sidebar_pull_request_text, wrap_text_to_cells,
+        SidebarLine, SidebarLineStyle, format_listening_ports, hex_to_linear,
+        sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear, wrap_text_to_cells,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
         WorkspacePullRequestStatus,
     };
     use std::path::Path;
+    use window::color::LinearRgba;
+
+    fn approx(a: f32, b: f32) {
+        assert!(
+            (a - b).abs() < 1e-4,
+            "expected {a} ≈ {b}, diff={}",
+            (a - b).abs()
+        );
+    }
+
+    fn assert_rgba_eq(actual: LinearRgba, expected: LinearRgba) {
+        approx(actual.0, expected.0);
+        approx(actual.1, expected.1);
+        approx(actual.2, expected.2);
+        approx(actual.3, expected.3);
+    }
+
+    #[test]
+    fn tint_linear_t_zero_returns_bg() {
+        let bg = LinearRgba(0.1, 0.2, 0.3, 1.0);
+        let accent = LinearRgba(0.9, 0.8, 0.7, 1.0);
+        assert_rgba_eq(tint_linear(bg, accent, 0.0), bg);
+    }
+
+    #[test]
+    fn tint_linear_t_one_returns_accent() {
+        let bg = LinearRgba(0.1, 0.2, 0.3, 1.0);
+        let accent = LinearRgba(0.9, 0.8, 0.7, 1.0);
+        assert_rgba_eq(tint_linear(bg, accent, 1.0), accent);
+    }
+
+    #[test]
+    fn tint_linear_midpoint_is_average() {
+        let bg = LinearRgba(0.0, 0.0, 0.0, 1.0);
+        let accent = LinearRgba(1.0, 0.5, 0.25, 1.0);
+        let mid = tint_linear(bg, accent, 0.5);
+        assert_rgba_eq(mid, LinearRgba(0.5, 0.25, 0.125, 1.0));
+    }
+
+    #[test]
+    fn tint_linear_inactive_card_t_018_pulls_toward_accent() {
+        // The inactive-card mix uses t = 0.18; the result should be closer to
+        // bg than to accent but visibly tinted.
+        let bg = LinearRgba(0.0, 0.0, 0.0, 1.0);
+        let accent = LinearRgba(1.0, 0.0, 0.0, 1.0);
+        let result = tint_linear(bg, accent, 0.18);
+        approx(result.0, 0.18);
+        approx(result.1, 0.0);
+        approx(result.2, 0.0);
+        approx(result.3, 1.0);
+    }
+
+    #[test]
+    fn tint_linear_hover_t_028_stronger_than_inactive() {
+        // The hover mix (0.28) should be more saturated than the inactive
+        // mix (0.18), so the accent channel should be larger.
+        let bg = LinearRgba(0.0, 0.0, 0.0, 1.0);
+        let accent = LinearRgba(1.0, 0.0, 0.0, 1.0);
+        let inactive = tint_linear(bg, accent, 0.18);
+        let hover = tint_linear(bg, accent, 0.28);
+        assert!(
+            hover.0 > inactive.0,
+            "hover red channel ({}) should exceed inactive ({})",
+            hover.0,
+            inactive.0
+        );
+    }
+
+    #[test]
+    fn tint_linear_preserves_alpha_when_equal() {
+        let bg = LinearRgba(0.1, 0.2, 0.3, 0.5);
+        let accent = LinearRgba(0.9, 0.8, 0.7, 0.5);
+        let result = tint_linear(bg, accent, 0.4);
+        approx(result.3, 0.5);
+    }
+
+    #[test]
+    fn tint_linear_no_op_when_bg_equals_accent() {
+        let bg = LinearRgba(0.4, 0.4, 0.4, 1.0);
+        for t in [0.0, 0.18, 0.28, 0.5, 1.0] {
+            assert_rgba_eq(tint_linear(bg, bg, t), bg);
+        }
+    }
+
+    #[test]
+    fn hex_to_linear_round_trips_via_tint() {
+        // hex_to_linear and tint_linear are the two helpers used by the
+        // shaded-card pipeline; verify they compose without panicking and
+        // produce a finite result for a representative accent.
+        let bg = LinearRgba(0.18, 0.18, 0.21, 1.0);
+        let accent = hex_to_linear("#ff6b6b");
+        let result = tint_linear(bg, accent, 0.18);
+        assert!(result.0.is_finite() && result.1.is_finite() && result.2.is_finite());
+        // The result should land between bg and accent on each channel
+        assert!(result.0 > bg.0);
+        assert!(result.0 < accent.0);
+    }
 
     #[test]
     fn listening_ports_are_compact() {
@@ -970,6 +1087,7 @@ mod test {
             agent: None,
             foreground_process_name: None,
             accent_color: None,
+            emoji: None,
         };
 
         // When no agent is running, stale notification previews are suppressed.
@@ -1033,9 +1151,11 @@ mod test {
                 display_name: "Codex".to_string(),
                 status: AgentStatus::Working,
                 status_message: None,
+                subagent_count: 0,
             }),
             foreground_process_name: None,
             accent_color: None,
+            emoji: None,
         };
 
         assert_eq!(

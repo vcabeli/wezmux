@@ -24,6 +24,13 @@ use wezterm_dynamic::ToDynamic;
 use wezterm_term::input::{MouseButton, MouseEventKind as TMEK};
 use wezterm_term::{ClickPosition, LastMouseClick, StableRowIndex};
 
+/// Curated emoji presets shown in the workspace context menu. Order matters:
+/// the index here maps to the menu tag (201 + idx), so don't reorder without
+/// updating the tag handler in sidebar.rs.
+pub(crate) const EMOJI_PRESETS: &[&str] = &[
+    "🚀", "🐛", "🧪", "📦", "🔧", "⚡", "📝", "🎯", "💡", "🔥", "🌱", "🛠️",
+];
+
 impl super::TermWindow {
     fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
@@ -611,14 +618,21 @@ impl super::TermWindow {
     ) {
         use ::window::ContextMenuItem as NativeItem;
 
-        // Tag layout: 0-99 = actions, 100+ = color swatches
+        // Tag layout:
+        //   1     = Rename (nickname prompt)
+        //   2-6   = move/close actions
+        //   100   = color reset
+        //   101-108 = color swatches
+        //   200   = emoji reset
+        //   201+  = emoji presets
+        const TAG_RENAME: usize = 1;
         const TAG_MOVE_UP: usize = 2;
         const TAG_MOVE_DOWN: usize = 3;
         const TAG_MOVE_TO_TOP: usize = 4;
         const TAG_MOVE_TO_BOTTOM: usize = 5;
         const TAG_CLOSE: usize = 6;
         const TAG_COLOR_RESET: usize = 100;
-        // 101-108 = color swatches in order
+        const TAG_EMOJI_RESET: usize = 200;
 
         let color_items: Vec<NativeItem> = {
             let mut items = vec![
@@ -635,8 +649,24 @@ impl super::TermWindow {
             items
         };
 
+        let emoji_items: Vec<NativeItem> = {
+            let mut items = vec![
+                NativeItem::Entry { label: "Reset (No Emoji)".into(), tag: TAG_EMOJI_RESET },
+                NativeItem::Separator,
+            ];
+            for (idx, emoji) in EMOJI_PRESETS.iter().enumerate() {
+                items.push(NativeItem::Entry {
+                    label: (*emoji).to_string(),
+                    tag: 201 + idx,
+                });
+            }
+            items
+        };
+
         let menu_items = vec![
+            NativeItem::Entry { label: "Rename…".into(), tag: TAG_RENAME },
             NativeItem::SubMenu { label: "Workspace Color".into(), items: color_items },
+            NativeItem::SubMenu { label: "Workspace Emoji".into(), items: emoji_items },
             NativeItem::Separator,
             NativeItem::Entry { label: "Move Up".into(), tag: TAG_MOVE_UP },
             NativeItem::Entry { label: "Move Down".into(), tag: TAG_MOVE_DOWN },

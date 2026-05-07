@@ -9,6 +9,23 @@ pub struct WorkspaceCustomization {
     pub display_name: Option<String>,
     /// Accent color as hex string (e.g. "#ff6b6b"), None = use theme default
     pub accent_color: Option<String>,
+    /// Decorative emoji shown next to the workspace title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
+}
+
+/// Maximum byte length we accept for an emoji. Most emoji clusters fit in 16
+/// bytes; we cap at 32 to leave room for ZWJ sequences and skin-tone modifiers
+/// while rejecting anything that's clearly free-form text.
+const MAX_EMOJI_LEN: usize = 32;
+
+/// Sanitize an emoji string. Trims whitespace and rejects empty or oversize input.
+fn sanitize_emoji(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_EMOJI_LEN {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 /// Persistent workspace configuration.
@@ -97,11 +114,18 @@ impl WorkspaceConfigs {
             .unwrap_or_else(|| workspace.to_string())
     }
 
-    /// Set display name override for a workspace.
-    #[allow(dead_code)]
+    /// Set display name override for a workspace. Empty/whitespace-only input clears the override.
     pub fn set_display_name(&mut self, workspace: &str, display_name: Option<String>) {
+        let cleaned = display_name.and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
         let entry = self.workspaces.entry(workspace.to_string()).or_default();
-        entry.display_name = display_name;
+        entry.display_name = cleaned;
         self.prune_empty_workspace(workspace);
     }
 
@@ -112,6 +136,33 @@ impl WorkspaceConfigs {
             .and_then(|c| c.accent_color.as_ref())
             .filter(|color| is_valid_hex_color(color))
             .cloned()
+    }
+
+    /// Get emoji for workspace, if any.
+    pub fn emoji(&self, workspace: &str) -> Option<String> {
+        self.workspaces
+            .get(workspace)
+            .and_then(|c| c.emoji.clone())
+    }
+
+    /// Set emoji for workspace. Empty/whitespace-only or oversize strings are treated as None.
+    pub fn set_emoji(&mut self, workspace: &str, emoji: Option<String>) {
+        let cleaned = match emoji {
+            Some(e) => match sanitize_emoji(&e) {
+                Some(v) => Some(v),
+                None => {
+                    // Treat invalid input as a clear so the call still has an effect
+                    None
+                }
+            },
+            None => None,
+        };
+        let entry = self
+            .workspaces
+            .entry(workspace.to_string())
+            .or_default();
+        entry.emoji = cleaned;
+        self.prune_empty_workspace(workspace);
     }
 
     /// Set accent color for workspace. Validates #RRGGBB format; invalid values are ignored.
@@ -219,7 +270,9 @@ impl WorkspaceConfigs {
 
     fn prune_empty_workspace(&mut self, workspace: &str) {
         let remove = self.workspaces.get(workspace).is_some_and(|entry| {
-            entry.display_name.is_none() && entry.accent_color.is_none()
+            entry.display_name.is_none()
+                && entry.accent_color.is_none()
+                && entry.emoji.is_none()
         });
         if remove {
             self.workspaces.remove(workspace);
@@ -402,6 +455,7 @@ mod tests {
         let mut configs = WorkspaceConfigs::default();
         configs.set_display_name("project-a", Some("Project Alpha".into()));
         configs.set_accent_color("project-a", Some("#ff6b6b".into()));
+        configs.set_emoji("project-a", Some("🚀".into()));
         configs.workspace_order = vec!["project-a".into(), "default".into()];
 
         let json = serde_json::to_string_pretty(&configs).unwrap();
@@ -415,6 +469,86 @@ mod tests {
             restored.accent_color("project-a"),
             Some("#ff6b6b".to_string())
         );
+        assert_eq!(restored.emoji("project-a"), Some("🚀".to_string()));
         assert_eq!(restored.workspace_order, vec!["project-a", "default"]);
+    }
+
+    #[test]
+    fn test_emoji_set_and_get() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("🚀".into()));
+        assert_eq!(configs.emoji("ws"), Some("🚀".to_string()));
+    }
+
+    #[test]
+    fn test_emoji_default_none() {
+        let configs = WorkspaceConfigs::default();
+        assert_eq!(configs.emoji("ws"), None);
+    }
+
+    #[test]
+    fn test_emoji_clear() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("🔥".into()));
+        configs.set_emoji("ws", None);
+        assert_eq!(configs.emoji("ws"), None);
+    }
+
+    #[test]
+    fn test_emoji_empty_treated_as_clear() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("🔥".into()));
+        configs.set_emoji("ws", Some("   ".into()));
+        assert_eq!(configs.emoji("ws"), None);
+    }
+
+    #[test]
+    fn test_emoji_oversize_rejected() {
+        let mut configs = WorkspaceConfigs::default();
+        let too_long = "x".repeat(MAX_EMOJI_LEN + 1);
+        configs.set_emoji("ws", Some(too_long));
+        assert_eq!(configs.emoji("ws"), None);
+    }
+
+    #[test]
+    fn test_emoji_trims_whitespace() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("  🎯  ".into()));
+        assert_eq!(configs.emoji("ws"), Some("🎯".to_string()));
+    }
+
+    #[test]
+    fn test_prune_when_only_emoji_cleared() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("🔥".into()));
+        assert!(configs.workspaces.contains_key("ws"));
+        configs.set_emoji("ws", None);
+        assert!(!configs.workspaces.contains_key("ws"));
+    }
+
+    #[test]
+    fn test_prune_keeps_entry_when_emoji_set() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_emoji("ws", Some("🔥".into()));
+        configs.set_accent_color("ws", Some("#aabbcc".into()));
+        configs.set_accent_color("ws", None);
+        // Should still exist because emoji is set
+        assert!(configs.workspaces.contains_key("ws"));
+        assert_eq!(configs.emoji("ws"), Some("🔥".to_string()));
+    }
+
+    #[test]
+    fn test_display_name_trims() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_display_name("ws", Some("  Hello  ".into()));
+        assert_eq!(configs.display_name("ws"), "Hello");
+    }
+
+    #[test]
+    fn test_display_name_empty_input_clears() {
+        let mut configs = WorkspaceConfigs::default();
+        configs.set_display_name("ws", Some("Custom".into()));
+        configs.set_display_name("ws", Some("   ".into()));
+        assert_eq!(configs.display_name("ws"), "ws");
     }
 }
