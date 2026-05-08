@@ -92,4 +92,18 @@ config.keys = {
   { key = 'phys:0', mods = workspace_mod, action = act.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' } },
 }
 
+-- Cmd+click (Ctrl+click on Windows) to open links. The default plain-click
+-- binding only fires when mouse reporting is off, so it doesn't work inside
+-- TUI apps like vim/tmux/lazygit. Modifier-clicks bypass mouse reporting,
+-- so this works everywhere — matching the macOS convention used by Terminal,
+-- iTerm2, and VS Code.
+local link_mod = is_windows and 'CTRL' or 'SUPER'
+config.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = link_mod,
+    action = act.OpenLinkAtMouseCursor,
+  },
+}
+
 return config
