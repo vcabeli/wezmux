@@ -41,13 +41,10 @@ local primary_mod = is_windows and 'CTRL|SHIFT' or 'SUPER'
 local secondary_mod = is_windows and 'CTRL|ALT' or 'SUPER|SHIFT'
 -- Workspace switching uses Opt+Shift on macOS so we don't collide with
 -- system screenshot shortcuts (Cmd+Shift+3/4/5) which are intercepted by
--- macOS before any app sees them.
+-- macOS before any app sees them. phys:N (below) targets the hardware key
+-- regardless of layout, so we leave macOS Option-key composition at its
+-- default (enabled) and keep Opt+N → ~, Opt+E → ´, etc. working on AZERTY.
 local workspace_mod = is_windows and 'CTRL|ALT' or 'OPT|SHIFT'
-
--- Treat Option as a real Alt modifier so AZERTY composition doesn't swallow
--- the keypress before our binding fires.
-config.send_composed_key_when_left_alt_is_pressed = false
-config.send_composed_key_when_right_alt_is_pressed = false
 
 config.keys = {
   -- Pane splitting
