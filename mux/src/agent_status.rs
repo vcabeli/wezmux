@@ -126,8 +126,9 @@ impl AgentStatusStore {
     }
 
     pub fn remove(&mut self, pane_id: PaneId) {
-        self.statuses.remove(&pane_id);
-        self.generation += 1;
+        if self.statuses.remove(&pane_id).is_some() {
+            self.generation += 1;
+        }
     }
 
     pub fn get(&self, pane_id: PaneId) -> Option<&AgentPaneStatus> {
