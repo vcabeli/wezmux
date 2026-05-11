@@ -126,8 +126,9 @@ impl AgentStatusStore {
     }
 
     pub fn remove(&mut self, pane_id: PaneId) {
-        self.statuses.remove(&pane_id);
-        self.generation += 1;
+        if self.statuses.remove(&pane_id).is_some() {
+            self.generation += 1;
+        }
     }
 
     pub fn get(&self, pane_id: PaneId) -> Option<&AgentPaneStatus> {
@@ -267,10 +268,7 @@ mod test {
         // message is cleared (stale status label like "Claude finished")
         assert!(status.message.is_none());
         // last_working_message is preserved as fallback preview
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("old output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("old output"));
     }
 
     #[test]
@@ -386,10 +384,7 @@ mod test {
 
         let status = store.get(1).unwrap();
         // lwm is now "new output", not "old output"
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("new output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("new output"));
     }
 
     #[test]

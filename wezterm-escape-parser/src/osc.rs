@@ -50,10 +50,7 @@ pub enum OperatingSystemCommand {
     ResetColors(Vec<u8>),
     RxvtExtension(Vec<String>),
     ConEmuProgress(Progress),
-    WezmuxStatus {
-        event: String,
-        data: Option<String>,
-    },
+    WezmuxStatus { event: String, data: Option<String> },
 
     Unspecified(Vec<Vec<u8>>),
 }

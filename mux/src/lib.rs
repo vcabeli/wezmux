@@ -35,11 +35,11 @@ use wezterm_term::{Clipboard, ClipboardSelection, DownloadHandler, TerminalSize}
 use winapi::um::winsock2::{SOL_SOCKET, SO_RCVBUF, SO_SNDBUF};
 
 pub mod activity;
+pub mod agent_status;
 pub mod client;
 pub mod connui;
 pub mod domain;
 pub mod localpane;
-pub mod agent_status;
 pub mod notification;
 pub mod pane;
 pub mod renderable;
@@ -607,8 +607,7 @@ impl Mux {
     /// Generate a new unique workspace name using the scheme:
     /// default, defaulta, defaultb, ... defaultz, defaultza, defaultzb, ...
     pub fn generate_workspace_name(&self) -> String {
-        let used: std::collections::HashSet<String> =
-            self.iter_workspaces().into_iter().collect();
+        let used: std::collections::HashSet<String> = self.iter_workspaces().into_iter().collect();
 
         // First try "default" itself
         if !used.contains("default") {
@@ -766,7 +765,11 @@ impl Mux {
                 let body = sanitize_notification_text(body);
                 log::info!(
                     "notification_store: pane={} workspace={:?} unread={} title={:?} body={:?}",
-                    pane_id, workspace, unread, title, body
+                    pane_id,
+                    workspace,
+                    unread,
+                    title,
+                    body
                 );
                 self.notification_store
                     .lock()
@@ -793,18 +796,12 @@ impl Mux {
                     }
                     "message" => {
                         if let Some(msg) = data {
-                            store.update_message(
-                                *pane_id,
-                                sanitize_notification_text(&msg),
-                            );
+                            store.update_message(*pane_id, sanitize_notification_text(&msg));
                         }
                     }
                     "tool" => {
                         if let Some(tool) = data {
-                            store.update_tool(
-                                *pane_id,
-                                sanitize_notification_text(&tool),
-                            );
+                            store.update_tool(*pane_id, sanitize_notification_text(&tool));
                         }
                     }
                     "subagents" => {
@@ -892,10 +889,7 @@ impl Mux {
         self.notification_store.lock().unread_count(workspace)
     }
 
-    pub fn agent_status_for_pane(
-        &self,
-        pane_id: PaneId,
-    ) -> Option<agent_status::AgentPaneStatus> {
+    pub fn agent_status_for_pane(&self, pane_id: PaneId) -> Option<agent_status::AgentPaneStatus> {
         self.agent_status_store.lock().get(pane_id).cloned()
     }
 

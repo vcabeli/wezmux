@@ -39,12 +39,15 @@ config.inactive_pane_hsb = {
 local act = wezterm.action
 local primary_mod = is_windows and 'CTRL|SHIFT' or 'SUPER'
 local secondary_mod = is_windows and 'CTRL|ALT' or 'SUPER|SHIFT'
--- Workspace switching uses Opt+Shift on macOS so we don't collide with
--- system screenshot shortcuts (Cmd+Shift+3/4/5) which are intercepted by
--- macOS before any app sees them. phys:N (below) targets the hardware key
--- regardless of layout, so we leave macOS Option-key composition at its
--- default (enabled) and keep Opt+N → ~, Opt+E → ´, etc. working on AZERTY.
-local workspace_mod = is_windows and 'CTRL|ALT' or 'OPT|SHIFT'
+-- Workspace switching uses Cmd+Ctrl on macOS. Two alternatives were
+-- ruled out: Cmd+Shift+3/4/5 (macOS intercepts for screenshots before
+-- any app sees them) and Opt+Shift+<digit> (produces bracket characters
+-- on AZERTY — Opt+Shift+5 = `[`, Opt+Shift+°` = `]` — which makes the
+-- combo unusable for typing tmux's `C-b [` scrollback prefix).
+-- Cmd+Ctrl has no system shortcut on digits and doesn't go through the
+-- Option-composition path, so it works identically on QWERTY and AZERTY.
+-- phys:N (below) targets the hardware key regardless of layout.
+local workspace_mod = is_windows and 'CTRL|ALT' or 'SUPER|CTRL'
 
 config.keys = {
   -- Pane splitting

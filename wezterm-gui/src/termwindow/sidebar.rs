@@ -1,7 +1,7 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
+use mux::Mux;
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -414,22 +414,16 @@ impl crate::TermWindow {
                         });
                 let unread_count = mux.unread_notification_count_for_workspace(&name);
 
-                // Clear stale agent cache before building agent info.
-                // If we CAN see the foreground process and it's NOT an agent,
-                // the agent has genuinely exited. If process_info is None,
-                // it's a transient detection failure — keep the cache.
-                if let Some(pane_id) = active_pane_id {
-                    if active_pane_process_info.is_some()
-                        && active_pane_process_info
-                            .as_ref()
-                            .and_then(detect_agent_type)
-                            .is_none()
-                    {
-                        self.sidebar.last_known_agents.remove(&pane_id);
-                        mux.remove_agent_status(pane_id);
-                    }
-                }
-
+                // Note: we intentionally do NOT clear cached agent state
+                // here when the foreground process briefly looks non-agent.
+                // An agent like Claude routinely spawns short-lived
+                // subprocesses (Bash tool invocations, etc.) whose
+                // foreground is not the agent itself, so clearing on every
+                // such frame produced visible flicker as the card lost and
+                // regained its agent info on each paint. Genuine cleanup
+                // happens via MuxNotification::PaneRemoved when the pane
+                // actually closes; OSC 7777 `clear`/`idle` events update
+                // the displayed status while the pane is still alive.
                 let agent = build_agent_info(
                     active_pane_process_info.as_ref(),
                     active_pane_id,
@@ -615,9 +609,7 @@ impl crate::TermWindow {
                 }
             }
             200 => {
-                self.sidebar
-                    .workspace_configs
-                    .set_emoji(&workspace, None);
+                self.sidebar.workspace_configs.set_emoji(&workspace, None);
             }
             tag if tag >= 201 && tag < 201 + emoji_presets.len() => {
                 let idx = tag - 201;
@@ -906,10 +898,7 @@ fn build_agent_info(
 
     let agent_type = agent_type?;
 
-    let subagent_count = pane_status
-        .as_ref()
-        .map(|s| s.subagent_count)
-        .unwrap_or(0);
+    let subagent_count = pane_status.as_ref().map(|s| s.subagent_count).unwrap_or(0);
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -922,16 +911,14 @@ fn build_agent_info(
         // a generic status like "Claude is waiting for your input").
         let tool_fallback = pane_status.tool.as_ref().map(|t| format!("Running {t}..."));
         let msg = match status {
-            AgentStatus::Working => {
-                pane_status.message
-                    .or(pane_status.last_working_message)
-                    .or(tool_fallback)
-            }
-            _ => {
-                pane_status.last_working_message
-                    .or(pane_status.message)
-                    .or(tool_fallback)
-            }
+            AgentStatus::Working => pane_status
+                .message
+                .or(pane_status.last_working_message)
+                .or(tool_fallback),
+            _ => pane_status
+                .last_working_message
+                .or(pane_status.message)
+                .or(tool_fallback),
         };
         (status, msg)
     } else {
@@ -1247,8 +1234,7 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 #[cfg(test)]
 mod test {
     use super::{
-        WorkspacePullRequest, WorkspacePullRequestStatus,
-        parse_listening_ports, parse_pull_request,
+        parse_listening_ports, parse_pull_request, WorkspacePullRequest, WorkspacePullRequestStatus,
     };
 
     #[test]
@@ -1275,5 +1261,4 @@ n*:3000\n";
             })
         );
     }
-
 }

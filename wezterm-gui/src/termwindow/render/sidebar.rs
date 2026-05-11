@@ -948,8 +948,8 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        SidebarLine, SidebarLineStyle, format_listening_ports, hex_to_linear,
-        sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear, wrap_text_to_cells,
+        format_listening_ports, hex_to_linear, sidebar_entry_body_lines, sidebar_pull_request_text,
+        tint_linear, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,

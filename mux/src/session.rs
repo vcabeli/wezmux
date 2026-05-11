@@ -163,7 +163,6 @@ fn save_pane_scrollback(pane: &Arc<dyn Pane>, seqid: usize) -> anyhow::Result<()
     Ok(())
 }
 
-
 pub fn save_session(mux: &Mux) -> anyhow::Result<()> {
     let dir = session_dir();
     std::fs::create_dir_all(scrollback_dir())?;
@@ -194,7 +193,11 @@ pub fn save_session(mux: &Mux) -> anyhow::Result<()> {
                 // Save scrollback for this pane
                 if let Some(pane) = mux.get_pane(entry.pane_id) {
                     if let Err(err) = save_pane_scrollback(&pane, this_seqid) {
-                        log::warn!("Failed to save scrollback for pane {}: {:#}", entry.pane_id, err);
+                        log::warn!(
+                            "Failed to save scrollback for pane {}: {:#}",
+                            entry.pane_id,
+                            err
+                        );
                     }
                 }
 
@@ -269,7 +272,10 @@ fn cwd_from_pane_entry(entry: &crate::tab::PaneEntry) -> Option<String> {
             if std::path::Path::new(&path).is_dir() {
                 Some(path)
             } else {
-                log::warn!("Session restore: CWD {} no longer exists, using default", path);
+                log::warn!(
+                    "Session restore: CWD {} no longer exists, using default",
+                    path
+                );
                 None
             }
         } else {
@@ -287,10 +293,8 @@ pub async fn restore_session(
         return Ok(false);
     }
 
-    let json = std::fs::read_to_string(&json_path)
-        .context("read session.json")?;
-    let state: SessionState = serde_json::from_str(&json)
-        .context("parse session.json")?;
+    let json = std::fs::read_to_string(&json_path).context("read session.json")?;
+    let state: SessionState = serde_json::from_str(&json).context("parse session.json")?;
 
     if state.version != SESSION_VERSION {
         log::warn!(
@@ -338,9 +342,10 @@ pub async fn restore_session(
 
             // Recursively restore split panes
             if let Some(pane_id) = initial_pane_id {
-                if let Err(err) = restore_pane_splits(
-                    mux, domain, tab.tab_id(), &tab_state.pane_tree, pane_id,
-                ).await {
+                if let Err(err) =
+                    restore_pane_splits(mux, domain, tab.tab_id(), &tab_state.pane_tree, pane_id)
+                        .await
+                {
                     log::warn!("Failed to restore splits: {:#}", err);
                 }
             }
@@ -348,9 +353,9 @@ pub async fn restore_session(
 
         // Set active tab
         if let Some(mut window) = mux.get_window_mut(window_id) {
-            let idx = window_state.active_tab_idx.min(
-                window.len().saturating_sub(1)
-            );
+            let idx = window_state
+                .active_tab_idx
+                .min(window.len().saturating_sub(1));
             if window.len() > 0 {
                 window.set_active_without_saving(idx);
             }
@@ -384,7 +389,11 @@ async fn restore_pane_splits(
 ) -> anyhow::Result<()> {
     match node {
         PaneNode::Empty | PaneNode::Leaf(_) => Ok(()),
-        PaneNode::Split { left, right, node: split_info } => {
+        PaneNode::Split {
+            left,
+            right,
+            node: split_info,
+        } => {
             // Get CWD from the first leaf of the right subtree
             let right_first = first_leaf(right);
             let cwd = right_first.and_then(|e| cwd_from_pane_entry(e));
@@ -399,11 +408,19 @@ async fn restore_pane_splits(
             let pct = match split_info.direction {
                 crate::tab::SplitDirection::Horizontal => {
                     let total = split_info.first.cols as u32 + split_info.second.cols as u32;
-                    if total > 0 { (split_info.second.cols as u32 * 100 / total) as u8 } else { 50 }
+                    if total > 0 {
+                        (split_info.second.cols as u32 * 100 / total) as u8
+                    } else {
+                        50
+                    }
                 }
                 crate::tab::SplitDirection::Vertical => {
                     let total = split_info.first.rows as u32 + split_info.second.rows as u32;
-                    if total > 0 { (split_info.second.rows as u32 * 100 / total) as u8 } else { 50 }
+                    if total > 0 {
+                        (split_info.second.rows as u32 * 100 / total) as u8
+                    } else {
+                        50
+                    }
                 }
             };
 
@@ -414,12 +431,17 @@ async fn restore_pane_splits(
                 size: SplitSize::Percent(pct),
             };
 
-            let new_pane = domain.split_pane(
-                SplitSource::Spawn { command: None, command_dir: cwd },
-                tab_id,
-                pane_id,
-                split_request,
-            ).await?;
+            let new_pane = domain
+                .split_pane(
+                    SplitSource::Spawn {
+                        command: None,
+                        command_dir: cwd,
+                    },
+                    tab_id,
+                    pane_id,
+                    split_request,
+                )
+                .await?;
 
             mux.set_banner(None);
             let new_pane_id = new_pane.pane_id();
@@ -447,7 +469,11 @@ fn set_scrollback_banner(mux: &Arc<Mux>, seqid: usize) {
             mux.set_banner(None);
         }
         Err(err) => {
-            log::warn!("Failed to read scrollback for pane seqid {}: {:#}", seqid, err);
+            log::warn!(
+                "Failed to read scrollback for pane seqid {}: {:#}",
+                seqid,
+                err
+            );
             mux.set_banner(None);
         }
     }
