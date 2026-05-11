@@ -39,14 +39,14 @@ config.inactive_pane_hsb = {
 local act = wezterm.action
 local primary_mod = is_windows and 'CTRL|SHIFT' or 'SUPER'
 local secondary_mod = is_windows and 'CTRL|ALT' or 'SUPER|SHIFT'
--- Workspace switching uses Cmd+Ctrl on macOS. Cmd+Shift+3/4/5 are
--- screenshot shortcuts that macOS intercepts, and Opt+Shift+<digit>
--- produces bracket characters on AZERTY (Opt+Shift+5 = `[`,
--- Opt+Shift+°` = `]`), which breaks tmux prefix sequences like `C-b [`
--- for scrollback. Cmd+Ctrl avoids both: no system shortcut on digits,
--- and Cmd suppresses Option-key composition so AZERTY users get the
--- raw key event. phys:N (below) still targets the hardware key
--- regardless of layout.
+-- Workspace switching uses Cmd+Ctrl on macOS. Two alternatives were
+-- ruled out: Cmd+Shift+3/4/5 (macOS intercepts for screenshots before
+-- any app sees them) and Opt+Shift+<digit> (produces bracket characters
+-- on AZERTY — Opt+Shift+5 = `[`, Opt+Shift+°` = `]` — which makes the
+-- combo unusable for typing tmux's `C-b [` scrollback prefix).
+-- Cmd+Ctrl has no system shortcut on digits and doesn't go through the
+-- Option-composition path, so it works identically on QWERTY and AZERTY.
+-- phys:N (below) targets the hardware key regardless of layout.
 local workspace_mod = is_windows and 'CTRL|ALT' or 'SUPER|CTRL'
 
 config.keys = {
