@@ -1096,9 +1096,8 @@ impl Config {
                         .eval_async(),
                 )?;
                 let config = Config::apply_overrides_to(&lua, config)?;
-                let cfg = Config::from_lua(config, &lua).with_context(|| {
-                    "Error converting builtin default config to Config struct"
-                })?;
+                let cfg = Config::from_lua(config, &lua)
+                    .with_context(|| "Error converting builtin default config to Config struct")?;
                 Ok(cfg.compute_extra_defaults(None))
             });
 

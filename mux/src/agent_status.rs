@@ -268,10 +268,7 @@ mod test {
         // message is cleared (stale status label like "Claude finished")
         assert!(status.message.is_none());
         // last_working_message is preserved as fallback preview
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("old output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("old output"));
     }
 
     #[test]
@@ -387,10 +384,7 @@ mod test {
 
         let status = store.get(1).unwrap();
         // lwm is now "new output", not "old output"
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("new output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("new output"));
     }
 
     #[test]

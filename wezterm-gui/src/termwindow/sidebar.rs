@@ -1,7 +1,7 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
+use mux::Mux;
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -609,9 +609,7 @@ impl crate::TermWindow {
                 }
             }
             200 => {
-                self.sidebar
-                    .workspace_configs
-                    .set_emoji(&workspace, None);
+                self.sidebar.workspace_configs.set_emoji(&workspace, None);
             }
             tag if tag >= 201 && tag < 201 + emoji_presets.len() => {
                 let idx = tag - 201;
@@ -900,10 +898,7 @@ fn build_agent_info(
 
     let agent_type = agent_type?;
 
-    let subagent_count = pane_status
-        .as_ref()
-        .map(|s| s.subagent_count)
-        .unwrap_or(0);
+    let subagent_count = pane_status.as_ref().map(|s| s.subagent_count).unwrap_or(0);
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -916,16 +911,14 @@ fn build_agent_info(
         // a generic status like "Claude is waiting for your input").
         let tool_fallback = pane_status.tool.as_ref().map(|t| format!("Running {t}..."));
         let msg = match status {
-            AgentStatus::Working => {
-                pane_status.message
-                    .or(pane_status.last_working_message)
-                    .or(tool_fallback)
-            }
-            _ => {
-                pane_status.last_working_message
-                    .or(pane_status.message)
-                    .or(tool_fallback)
-            }
+            AgentStatus::Working => pane_status
+                .message
+                .or(pane_status.last_working_message)
+                .or(tool_fallback),
+            _ => pane_status
+                .last_working_message
+                .or(pane_status.message)
+                .or(tool_fallback),
         };
         (status, msg)
     } else {
@@ -1241,8 +1234,7 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 #[cfg(test)]
 mod test {
     use super::{
-        WorkspacePullRequest, WorkspacePullRequestStatus,
-        parse_listening_ports, parse_pull_request,
+        parse_listening_ports, parse_pull_request, WorkspacePullRequest, WorkspacePullRequestStatus,
     };
 
     #[test]
@@ -1269,5 +1261,4 @@ n*:3000\n";
             })
         );
     }
-
 }
