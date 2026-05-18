@@ -31,11 +31,11 @@ msg=$(printf '%s' "$msg" | tr -d '\007\033;')
 # Claude Code sends these when waiting for plan approval, tool permission, etc.
 case "$msg" in
   *"needs your"*|*"waiting for"*|*"approval"*|*"permission"*)
-    printf '\033]7777;status;needs_input\007' > /dev/tty 2>/dev/null || true
+    printf '\033]7777;status;needs_input\007' > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
     ;;
 esac
 
 # Emit both: structured status + notification store
-printf '\033]7777;message;%s\007' "$msg" > /dev/tty 2>/dev/null || true
-printf '\033]9;%s\007' "$msg" > /dev/tty 2>/dev/null || true
+printf '\033]7777;message;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]9;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
 exit 0

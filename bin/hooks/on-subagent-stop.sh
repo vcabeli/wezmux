@@ -37,7 +37,7 @@ count=0
 count=$(( count - 1 ))
 [ "$count" -lt 0 ] && count=0
 echo "$count" > "$count_file"
-printf '\033]7777;subagents;%s\007' "$count" > /dev/tty 2>/dev/null || true
+printf '\033]7777;subagents;%s\007' "$count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
 
 # Clean up when no subagents remain
 [ "$count" -eq 0 ] && rm -f "$count_file"

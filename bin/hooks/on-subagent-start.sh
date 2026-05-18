@@ -36,6 +36,6 @@ count=0
 [ -f "$count_file" ] && count=$(cat "$count_file" 2>/dev/null)
 count=$(( count + 1 ))
 echo "$count" > "$count_file"
-printf '\033]7777;subagents;%s\007' "$count" > /dev/tty 2>/dev/null || true
+printf '\033]7777;subagents;%s\007' "$count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
 
 exit 0

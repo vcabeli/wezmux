@@ -76,6 +76,18 @@ export HISTFILE="$ZDOTDIR/.zsh_history"
 if [[ -n "${WEZMUX_BIN:-}" && -d "$WEZMUX_BIN" ]]; then
   export PATH="$WEZMUX_BIN:$PATH"
 fi
+
+# Capture the pane's tty so agent hooks (claude, codex) can emit OSC
+# sequences even when the agent spawns them without a controlling tty.
+# Claude Code 2.1.143+ runs hooks detached, so `printf > /dev/tty` fails
+# with "Device not configured" and OSC 7777 never reaches the sidebar.
+if [[ -z "${WEZMUX_TTY:-}" ]]; then
+  __wezmux_tty="$(tty 2>/dev/null)"
+  if [[ -n "$__wezmux_tty" && "$__wezmux_tty" != "not a tty" && -w "$__wezmux_tty" ]]; then
+    export WEZMUX_TTY="$__wezmux_tty"
+  fi
+  unset __wezmux_tty
+fi
 unset _WEZMUX_REAL_ZDOTDIR
 "#;
     fs::write(dir.join(".zshrc"), content)?;
