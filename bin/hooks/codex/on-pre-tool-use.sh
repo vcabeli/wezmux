@@ -12,6 +12,6 @@ fi
 if [ -n "$tool_name" ]; then
     # Strip escape/BEL to prevent OSC injection
     tool_name=$(printf '%s' "$tool_name" | tr -d '\007\033')
-    printf '\033]7777;tool;%s\007' "$tool_name" > /dev/tty 2>/dev/null || true
+    printf '\033]7777;tool;%s\007' "$tool_name" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
 fi
 exit 0
