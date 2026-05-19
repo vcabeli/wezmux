@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install wezmux Codex hooks
 # Merges into existing ~/.codex/hooks.json (preserves other hooks like cmux)
-# and enables codex_hooks in ~/.codex/config.toml
+# and enables the hooks feature in ~/.codex/config.toml
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -66,30 +66,34 @@ else
     echo "Created $HOOKS_JSON"
 fi
 
-# --- 2. Enable codex_hooks in config.toml ---
+# --- 2. Enable hooks feature in config.toml ---
+# Codex renamed [features].codex_hooks → [features].hooks. Migrate old key if present.
 CONFIG_TOML="$CODEX_DIR/config.toml"
 
 if [ -f "$CONFIG_TOML" ]; then
     if grep -q 'codex_hooks' "$CONFIG_TOML"; then
-        sed -i '' 's/codex_hooks *= *false/codex_hooks = true/' "$CONFIG_TOML"
-        echo "Enabled codex_hooks in $CONFIG_TOML"
+        sed -i '' -E 's/codex_hooks[[:space:]]*=[[:space:]]*(true|false)/hooks = true/' "$CONFIG_TOML"
+        echo "Migrated codex_hooks → hooks in $CONFIG_TOML"
+    elif grep -qE '^[[:space:]]*hooks[[:space:]]*=' "$CONFIG_TOML"; then
+        sed -i '' -E 's/^([[:space:]]*)hooks[[:space:]]*=[[:space:]]*false/\1hooks = true/' "$CONFIG_TOML"
+        echo "Enabled hooks in $CONFIG_TOML"
     elif grep -q '\[features\]' "$CONFIG_TOML"; then
         sed -i '' '/\[features\]/a\
-codex_hooks = true
+hooks = true
 ' "$CONFIG_TOML"
-        echo "Added codex_hooks = true to [features] in $CONFIG_TOML"
+        echo "Added hooks = true to [features] in $CONFIG_TOML"
     else
         echo "" >> "$CONFIG_TOML"
         echo "[features]" >> "$CONFIG_TOML"
-        echo "codex_hooks = true" >> "$CONFIG_TOML"
-        echo "Added [features] section with codex_hooks = true to $CONFIG_TOML"
+        echo "hooks = true" >> "$CONFIG_TOML"
+        echo "Added [features] section with hooks = true to $CONFIG_TOML"
     fi
 else
     cat > "$CONFIG_TOML" <<'EOF'
 [features]
-codex_hooks = true
+hooks = true
 EOF
-    echo "Created $CONFIG_TOML with codex_hooks = true"
+    echo "Created $CONFIG_TOML with hooks = true"
 fi
 
 # --- 3. Make hook scripts executable ---
