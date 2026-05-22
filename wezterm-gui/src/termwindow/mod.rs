@@ -85,6 +85,7 @@ pub mod sidebar;
 pub mod spawn;
 pub mod webgpu;
 pub mod workspace_config;
+pub mod workspace_emoji_picker;
 use crate::spawn::SpawnWhere;
 use prevcursor::PrevCursorPos;
 
@@ -166,6 +167,15 @@ pub enum UIItemType {
     SidebarSettings,
     SidebarResizeHandle,
     SidebarBackground,
+    /// Emoji cell in the workspace emoji picker modal. Carries the glyph
+    /// to apply when clicked.
+    WorkspaceEmojiCell(String),
+    /// "Reset" button in the workspace emoji picker modal.
+    WorkspaceEmojiReset,
+    /// "Cancel" button in the workspace emoji picker modal.
+    WorkspaceEmojiCancel,
+    /// Scroll wheel target spanning the picker body.
+    WorkspaceEmojiBackground,
     AboveScrollThumb,
     ScrollThumb,
     BelowScrollThumb,
@@ -1873,7 +1883,7 @@ impl TermWindow {
         self.emit_window_event("window-config-reloaded", None);
     }
 
-    fn invalidate_modal(&mut self) {
+    pub fn invalidate_modal(&mut self) {
         if let Some(modal) = self.get_modal() {
             modal.reconfigure(self);
             if let Some(window) = self.window.as_ref() {
@@ -1896,7 +1906,7 @@ impl TermWindow {
         }
     }
 
-    fn get_modal(&self) -> Option<Rc<dyn Modal>> {
+    pub fn get_modal(&self) -> Option<Rc<dyn Modal>> {
         self.modal.borrow().as_ref().map(|m| Rc::clone(&m))
     }
 

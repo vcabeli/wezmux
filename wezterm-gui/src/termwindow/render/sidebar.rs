@@ -387,6 +387,37 @@ fn build_card_element(
 
     let mut card_children: Vec<Element> = vec![];
 
+    // Nickname header: centered above the title row. Stays visible even when
+    // an agent (Claude Code, Codex…) overrides the title line below.
+    if let Some(ref nickname) = entry.display_name {
+        // Title font is proportional (Roboto), so we can't perfectly center
+        // with leading spaces. We pad based on text_cols and approximate the
+        // ratio between a space and an average glyph. Looks visually centered
+        // for typical nicknames and keeps the implementation a few lines.
+        let visible_len = nickname.chars().count();
+        // text_cols was sized using avg_char_width ≈ 0.55 of cell width; a
+        // space at ~0.4 of cell width fits ~1.4 chars of visible content per
+        // leading-space character. Approximate as 1 space per ~0.7 of a glyph.
+        let target_pad_chars = text_cols.saturating_sub(visible_len) as f32 * 0.5;
+        let pad = (target_pad_chars * 1.4).round() as usize;
+        let nickname_text = format!("{}{}", " ".repeat(pad), nickname);
+        let nickname_color = if is_active {
+            theme.active_text
+        } else {
+            theme.text
+        };
+        card_children.push(
+            text_element_fg(font, &nickname_text, nickname_color)
+                .display(DisplayType::Block)
+                .margin(BoxDimension {
+                    left: Dimension::Pixels(0.),
+                    right: Dimension::Pixels(0.),
+                    top: Dimension::Pixels(0.),
+                    bottom: Dimension::Pixels(4.),
+                }),
+        );
+    }
+
     // Title line (with optional unread badge prefix and nerd font icon)
     let base_title = if let Some(ref agent) = entry.agent {
         format!(
@@ -1088,6 +1119,7 @@ mod test {
             foreground_process_name: None,
             accent_color: None,
             emoji: None,
+            display_name: None,
         };
 
         // When no agent is running, stale notification previews are suppressed.
@@ -1156,6 +1188,7 @@ mod test {
             foreground_process_name: None,
             accent_color: None,
             emoji: None,
+            display_name: None,
         };
 
         assert_eq!(

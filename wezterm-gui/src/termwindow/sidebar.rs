@@ -222,6 +222,9 @@ pub struct WorkspaceEntry {
     pub accent_color: Option<String>,
     /// Custom emoji from workspace config, shown next to the title.
     pub emoji: Option<String>,
+    /// User-supplied nickname. Rendered as a centered header above the title
+    /// line so it stays visible even when an agent overrides the title.
+    pub display_name: Option<String>,
 }
 
 pub fn configured_pixel_width(config: &ConfigHandle, context: DimensionContext) -> usize {
@@ -454,12 +457,14 @@ impl crate::TermWindow {
                     });
                 }
 
-                // Apply display name override from workspace config
+                // Pull the user's nickname (if any) — rendered as its own
+                // centered header line in the card, separate from `title`,
+                // so it remains visible even when an agent overrides the title.
                 let display_title = self.sidebar.workspace_configs.display_name(&name);
-                let title = if display_title != name {
-                    display_title
+                let display_name = if display_title != name {
+                    Some(display_title)
                 } else {
-                    title
+                    None
                 };
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
                 let emoji = self.sidebar.workspace_configs.emoji(&name);
@@ -493,6 +498,7 @@ impl crate::TermWindow {
                     foreground_process_name,
                     accent_color,
                     emoji,
+                    display_name,
                 }
             })
             .collect();
@@ -561,8 +567,7 @@ impl crate::TermWindow {
 
     /// Handle a native context menu selection.
     /// Tags: 1=Rename, 2=MoveUp, 3=MoveDown, 4=MoveToTop, 5=MoveToBottom,
-    ///        6=Close, 100=ColorReset, 101-108=Color swatches,
-    ///        200=EmojiReset, 201+=Emoji presets
+    ///        6=Close, 7=EmojiPicker, 100=ColorReset, 101-108=Color swatches
     pub fn handle_context_menu_selection(&mut self, tag: usize, window: &::window::Window) {
         let workspace = match self.sidebar.context_menu_workspace.take() {
             Some(name) => name,
@@ -572,7 +577,6 @@ impl crate::TermWindow {
         const COLOR_HEXES: &[&str] = &[
             "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
         ];
-        let emoji_presets = super::mouseevent::EMOJI_PRESETS;
 
         match tag {
             1 => {
@@ -601,6 +605,11 @@ impl crate::TermWindow {
             6 => {
                 self.close_workspace_by_name(&workspace);
             }
+            7 => {
+                self.show_workspace_emoji_picker(workspace.clone());
+                // Modal handles its own save + invalidate on selection.
+                return;
+            }
             100 => {
                 self.sidebar
                     .workspace_configs
@@ -612,19 +621,6 @@ impl crate::TermWindow {
                     self.sidebar
                         .workspace_configs
                         .set_accent_color(&workspace, Some(hex.to_string()));
-                }
-            }
-            200 => {
-                self.sidebar
-                    .workspace_configs
-                    .set_emoji(&workspace, None);
-            }
-            tag if tag >= 201 && tag < 201 + emoji_presets.len() => {
-                let idx = tag - 201;
-                if let Some(emoji) = emoji_presets.get(idx) {
-                    self.sidebar
-                        .workspace_configs
-                        .set_emoji(&workspace, Some((*emoji).to_string()));
                 }
             }
             _ => {}
@@ -694,6 +690,41 @@ impl crate::TermWindow {
         });
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
+    }
+
+    /// Open the workspace emoji picker modal for the given workspace.
+    /// Replaces the legacy curated-preset native submenu.
+    pub fn show_workspace_emoji_picker(&mut self, workspace: String) {
+        use crate::termwindow::workspace_emoji_picker::WorkspaceEmojiPicker;
+        let modal = WorkspaceEmojiPicker::new(workspace);
+        self.set_modal(std::rc::Rc::new(modal));
+    }
+
+    /// Apply an emoji selection from the workspace emoji picker modal and
+    /// dismiss it. Passing `None` clears the emoji.
+    pub fn apply_workspace_emoji_from_picker(&mut self, emoji: Option<String>) {
+        use crate::termwindow::workspace_emoji_picker::WorkspaceEmojiPicker;
+        let workspace = {
+            let modal = match self.get_modal() {
+                Some(m) => m,
+                None => return,
+            };
+            match (*modal).downcast_ref::<WorkspaceEmojiPicker>() {
+                Some(picker) => picker.workspace().to_string(),
+                None => return,
+            }
+        };
+        self.sidebar
+            .workspace_configs
+            .set_emoji(&workspace, emoji);
+        if let Err(e) = self.sidebar.workspace_configs.save() {
+            log::error!("Failed to save workspace configs: {:#}", e);
+        }
+        self.sidebar.invalidate_cache();
+        self.cancel_modal();
+        if let Some(window) = self.window.as_ref() {
+            window.invalidate();
+        }
     }
 
     /// Called from the prompt overlay when the user submits a nickname value.
