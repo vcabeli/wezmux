@@ -24,13 +24,6 @@ use wezterm_dynamic::ToDynamic;
 use wezterm_term::input::{MouseButton, MouseEventKind as TMEK};
 use wezterm_term::{ClickPosition, LastMouseClick, StableRowIndex};
 
-/// Curated emoji presets shown in the workspace context menu. Order matters:
-/// the index here maps to the menu tag (201 + idx), so don't reorder without
-/// updating the tag handler in sidebar.rs.
-pub(crate) const EMOJI_PRESETS: &[&str] = &[
-    "🚀", "🐛", "🧪", "📦", "🔧", "⚡", "📝", "🎯", "💡", "🔥", "🌱", "🛠️",
-];
-
 impl super::TermWindow {
     fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
@@ -59,7 +52,11 @@ impl super::TermWindow {
             | UIItemType::SidebarSplitVertical
             | UIItemType::SidebarSettings
             | UIItemType::SidebarResizeHandle
-            | UIItemType::SidebarBackground => {}
+            | UIItemType::SidebarBackground
+            | UIItemType::WorkspaceEmojiCell(_)
+            | UIItemType::WorkspaceEmojiReset
+            | UIItemType::WorkspaceEmojiCancel
+            | UIItemType::WorkspaceEmojiBackground => {}
             UIItemType::CloseTab(_)
             | UIItemType::AboveScrollThumb
             | UIItemType::BelowScrollThumb
@@ -84,6 +81,10 @@ impl super::TermWindow {
             | UIItemType::SidebarSettings
             | UIItemType::SidebarResizeHandle
             | UIItemType::SidebarBackground
+            | UIItemType::WorkspaceEmojiCell(_)
+            | UIItemType::WorkspaceEmojiReset
+            | UIItemType::WorkspaceEmojiCancel
+            | UIItemType::WorkspaceEmojiBackground
             => {
                 self.sidebar.hovered_workspace = None;
             }
@@ -501,6 +502,39 @@ impl super::TermWindow {
             UIItemType::SidebarBackground => {
                 // No click action for background; scroll is handled above
             }
+            UIItemType::WorkspaceEmojiCell(glyph) => {
+                if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+                    self.apply_workspace_emoji_from_picker(Some(glyph));
+                } else {
+                    context.set_cursor(Some(MouseCursor::Hand));
+                }
+            }
+            UIItemType::WorkspaceEmojiReset => {
+                if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+                    self.apply_workspace_emoji_from_picker(None);
+                } else {
+                    context.set_cursor(Some(MouseCursor::Hand));
+                }
+            }
+            UIItemType::WorkspaceEmojiCancel => {
+                if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+                    self.cancel_modal();
+                } else {
+                    context.set_cursor(Some(MouseCursor::Hand));
+                }
+            }
+            UIItemType::WorkspaceEmojiBackground => {
+                if let WMEK::VertWheel(amount) = event.kind {
+                    use crate::termwindow::workspace_emoji_picker::WorkspaceEmojiPicker;
+                    if let Some(modal) = self.get_modal() {
+                        if let Some(picker) = (*modal).downcast_ref::<WorkspaceEmojiPicker>() {
+                            // Negative amount = scroll down (cursor convention).
+                            picker.scroll_by(-(amount as isize));
+                            self.invalidate_modal();
+                        }
+                    }
+                }
+            }
             UIItemType::AboveScrollThumb => {
                 self.mouse_event_above_scroll_thumb(item, pane, event, context);
             }
@@ -621,18 +655,17 @@ impl super::TermWindow {
         // Tag layout:
         //   1     = Rename (nickname prompt)
         //   2-6   = move/close actions
+        //   7     = open emoji picker modal
         //   100   = color reset
         //   101-108 = color swatches
-        //   200   = emoji reset
-        //   201+  = emoji presets
         const TAG_RENAME: usize = 1;
         const TAG_MOVE_UP: usize = 2;
         const TAG_MOVE_DOWN: usize = 3;
         const TAG_MOVE_TO_TOP: usize = 4;
         const TAG_MOVE_TO_BOTTOM: usize = 5;
         const TAG_CLOSE: usize = 6;
+        const TAG_EMOJI_PICK: usize = 7;
         const TAG_COLOR_RESET: usize = 100;
-        const TAG_EMOJI_RESET: usize = 200;
 
         let color_items: Vec<NativeItem> = {
             let mut items = vec![
@@ -649,24 +682,10 @@ impl super::TermWindow {
             items
         };
 
-        let emoji_items: Vec<NativeItem> = {
-            let mut items = vec![
-                NativeItem::Entry { label: "Reset (No Emoji)".into(), tag: TAG_EMOJI_RESET },
-                NativeItem::Separator,
-            ];
-            for (idx, emoji) in EMOJI_PRESETS.iter().enumerate() {
-                items.push(NativeItem::Entry {
-                    label: (*emoji).to_string(),
-                    tag: 201 + idx,
-                });
-            }
-            items
-        };
-
         let menu_items = vec![
             NativeItem::Entry { label: "Rename…".into(), tag: TAG_RENAME },
             NativeItem::SubMenu { label: "Workspace Color".into(), items: color_items },
-            NativeItem::SubMenu { label: "Workspace Emoji".into(), items: emoji_items },
+            NativeItem::Entry { label: "Workspace Emoji…".into(), tag: TAG_EMOJI_PICK },
             NativeItem::Separator,
             NativeItem::Entry { label: "Move Up".into(), tag: TAG_MOVE_UP },
             NativeItem::Entry { label: "Move Down".into(), tag: TAG_MOVE_DOWN },
