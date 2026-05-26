@@ -1708,7 +1708,7 @@ fn default_swap_backspace_and_delete() -> bool {
 }
 
 fn default_scrollback_lines() -> usize {
-    3500
+    1_000_000
 }
 
 const MAX_SCROLLBACK_LINES: usize = 999_999_999;

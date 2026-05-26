@@ -19,7 +19,8 @@ you have available.
 
 ```lua
 -- How many lines of scrollback you want to retain per tab
-config.scrollback_lines = 3500
+-- (Wezmux default is 1_000_000; upstream WezTerm default was 3500)
+config.scrollback_lines = 1000000
 ```
 
 ### Clearing the scrollback buffer
