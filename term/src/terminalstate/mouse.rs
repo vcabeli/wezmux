@@ -119,18 +119,30 @@ impl TerminalState {
         } else if self.mouse_tracking || self.button_event_mouse || self.any_event_mouse {
             self.encode_x10_or_utf8(event, button)?;
         } else if self.screen.is_alt_screen_active() {
-            // Send cursor keys instead (equivalent to xterm's alternateScroll mode)
-            for _ in 0..self.config.alternate_buffer_wheel_scroll_speed() {
-                self.key_down(
-                    match event.button {
-                        MouseButton::WheelDown(_) => KeyCode::DownArrow,
-                        MouseButton::WheelUp(_) => KeyCode::UpArrow,
-                        MouseButton::WheelLeft(_) => KeyCode::LeftArrow,
-                        MouseButton::WheelRight(_) => KeyCode::RightArrow,
-                        _ => bail!("unexpected mouse event"),
-                    },
-                    KeyModifiers::default(),
-                )?;
+            // Send paging keys for vertical wheel scrolls so that TUIs (Claude Code,
+            // less, vim) actually scroll their viewport instead of treating the
+            // synthesized UpArrow/DownArrow as history navigation. One Page key per
+            // wheel tick — pages are already coarse, so we don't multiply by
+            // `alternate_buffer_wheel_scroll_speed`. Horizontal wheel still emits
+            // arrow keys (no Page equivalent) and honors the speed multiplier.
+            match event.button {
+                MouseButton::WheelUp(_) => {
+                    self.key_down(KeyCode::PageUp, KeyModifiers::default())?;
+                }
+                MouseButton::WheelDown(_) => {
+                    self.key_down(KeyCode::PageDown, KeyModifiers::default())?;
+                }
+                MouseButton::WheelLeft(_) | MouseButton::WheelRight(_) => {
+                    let key = if matches!(event.button, MouseButton::WheelLeft(_)) {
+                        KeyCode::LeftArrow
+                    } else {
+                        KeyCode::RightArrow
+                    };
+                    for _ in 0..self.config.alternate_buffer_wheel_scroll_speed() {
+                        self.key_down(key, KeyModifiers::default())?;
+                    }
+                }
+                _ => bail!("unexpected mouse event"),
             }
         }
         Ok(())
