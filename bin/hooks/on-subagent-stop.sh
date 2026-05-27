@@ -7,9 +7,26 @@
 input=$(cat 2>/dev/null)
 
 session_id=""
+bg_task_count=""
+cron_count=""
 if command -v jq >/dev/null 2>&1; then
     session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
+    # background_tasks / session_crons arrays (Claude Code v2.1.145+).
+    bg_task_count=$(echo "$input" | jq -r '(.background_tasks // []) | length' 2>/dev/null)
+    cron_count=$(echo "$input" | jq -r '(.session_crons // []) | length' 2>/dev/null)
 fi
+
+# Forward background task / cron counts even when session_id is missing
+# (older Claude Code versions omit session_id only when the field-set is
+# different — but the new array fields are still cheap to surface).
+case "$bg_task_count" in
+    ''|*[!0-9]*) ;;
+    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+esac
+case "$cron_count" in
+    ''|*[!0-9]*) ;;
+    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+esac
 
 [ -z "$session_id" ] && exit 0
 

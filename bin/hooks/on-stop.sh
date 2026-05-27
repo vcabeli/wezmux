@@ -8,9 +8,16 @@ input=$(cat 2>/dev/null)
 
 reason="end_turn"
 last_message=""
+bg_task_count=""
+cron_count=""
 if command -v jq >/dev/null 2>&1; then
     reason=$(echo "$input" | jq -r '.stop_hook_reason // .reason // "end_turn"' 2>/dev/null)
     last_message=$(echo "$input" | jq -r '.last_assistant_message // empty' 2>/dev/null)
+    # background_tasks / session_crons arrays (Claude Code v2.1.145+).
+    # Empty string when the field is absent so we can skip the OSC emit
+    # and remain compatible with older Claude Code releases.
+    bg_task_count=$(echo "$input" | jq -r '(.background_tasks // []) | length' 2>/dev/null)
+    cron_count=$(echo "$input" | jq -r '(.session_crons // []) | length' 2>/dev/null)
 fi
 
 case "$reason" in
@@ -33,6 +40,16 @@ preview=$(printf '%s' "$preview" | tr -d '\007\033;')
 # Structured status for agent store
 printf '\033]7777;status;idle\007' > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
 printf '\033]7777;message;%s\007' "$preview" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+# Background tasks & scheduled tasks: authoritative count from the harness.
+# Only emit when jq could parse the field (older Claude versions omit it).
+case "$bg_task_count" in
+    ''|*[!0-9]*) ;;
+    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+esac
+case "$cron_count" in
+    ''|*[!0-9]*) ;;
+    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+esac
 # Subagent count is managed exclusively by on-subagent-start/stop hooks.
 # Claude Code's Stop hook input does not currently expose a reason field
 # (no stop_button/interrupt distinction — see anthropics/claude-code#9516),

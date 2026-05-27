@@ -814,6 +814,20 @@ impl Mux {
                             }
                         }
                     }
+                    "background_tasks" => {
+                        if let Some(count_str) = data.as_deref() {
+                            if let Ok(count) = count_str.parse::<u32>() {
+                                store.update_background_tasks_count(*pane_id, count);
+                            }
+                        }
+                    }
+                    "session_crons" => {
+                        if let Some(count_str) = data.as_deref() {
+                            if let Ok(count) = count_str.parse::<u32>() {
+                                store.update_session_crons_count(*pane_id, count);
+                            }
+                        }
+                    }
                     "clear" => store.clear(*pane_id),
                     _ => log::warn!("unknown wezmux status event: {event}"),
                 }

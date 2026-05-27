@@ -106,7 +106,9 @@ ESC ] 7777 ; EVENT ; DATA BEL
 | `status` | `working\|idle\|needs_input` | Updates agent status indicator |
 | `message` | text | Sets preview text on workspace card |
 | `tool` | tool name | Reports current tool (cached) |
-| `subagents` | count (integer) | Shows "N background tasks" line |
+| `subagents` | count (integer) | Shows "N subagents" line |
+| `background_tasks` | count (integer) | Shows "N background tasks" line (Bash `run_in_background` / `Monitor`) |
+| `session_crons` | count (integer) | Shows "N scheduled tasks" line (`/loop`, `CronCreate`) |
 | `clear` | (none) | Resets to idle, preserves last message |
 
 State machine guards in `AgentStatusStore`:
