@@ -634,6 +634,7 @@ impl super::TermWindow {
                 None => return, // Only workspace, don't close
             }
         }
+        mux::quit_hooks::graceful_kill_agents_in_workspace(&mux, workspace);
         let window_ids: Vec<_> = mux.iter_windows_in_workspace(workspace);
         for window_id in window_ids {
             mux.kill_window(window_id);

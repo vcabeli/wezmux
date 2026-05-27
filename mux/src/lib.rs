@@ -42,6 +42,7 @@ pub mod localpane;
 pub mod agent_status;
 pub mod notification;
 pub mod pane;
+pub mod quit_hooks;
 pub mod renderable;
 pub mod session;
 pub mod ssh;

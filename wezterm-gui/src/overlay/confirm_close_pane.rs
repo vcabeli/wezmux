@@ -61,6 +61,7 @@ pub fn confirm_close_window(
     )? {
         promise::spawn::spawn_into_main_thread(async move {
             let mux = Mux::get();
+            mux::quit_hooks::graceful_kill_agents_in_window(&mux, mux_window_id);
             mux.kill_window(mux_window_id);
         })
         .detach();
@@ -77,8 +78,10 @@ pub fn confirm_quit_program(
 ) -> anyhow::Result<()> {
     if confirm::run_confirmation("🛑 Really Quit Wezmux?", &mut term)? {
         promise::spawn::spawn_into_main_thread(async move {
-            // Save session before quitting — windows are still alive
+            // SIGTERM agents (claude, etc.) so their "Resume this session
+            // with: ..." line lands in scrollback before we save it.
             if let Some(mux) = mux::Mux::try_get() {
+                mux::quit_hooks::graceful_kill_all_agents(&mux);
                 if let Err(err) = mux::session::save_session(&mux) {
                     log::error!("Failed to save session on quit: {:#}", err);
                 }
