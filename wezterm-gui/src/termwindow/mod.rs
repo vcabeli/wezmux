@@ -505,6 +505,7 @@ impl TermWindow {
         match self.config.window_close_confirmation {
             WindowCloseConfirmation::NeverPrompt => {
                 // Immediately kill the tabs and allow the window to close
+                mux::quit_hooks::graceful_kill_agents_in_window(&mux, self.mux_window_id);
                 mux.kill_window(self.mux_window_id);
                 window.close();
                 front_end().forget_known_window(window);
@@ -513,6 +514,7 @@ impl TermWindow {
                 let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
                     Some(tab) => tab,
                     None => {
+                        mux::quit_hooks::graceful_kill_agents_in_window(&mux, self.mux_window_id);
                         mux.kill_window(self.mux_window_id);
                         window.close();
                         front_end().forget_known_window(window);
@@ -526,6 +528,7 @@ impl TermWindow {
                     .get_window(mux_window_id)
                     .map_or(false, |w| w.can_close_without_prompting());
                 if can_close {
+                    mux::quit_hooks::graceful_kill_agents_in_window(&mux, self.mux_window_id);
                     mux.kill_window(self.mux_window_id);
                     window.close();
                     front_end().forget_known_window(window);
@@ -2850,6 +2853,13 @@ impl TermWindow {
             QuitApplication => {
                 let mux = Mux::get();
                 let config = &self.config;
+
+                // SIGTERM agents (claude, etc.) so they print their "Resume
+                // this session with: ..." line before we snapshot scrollback.
+                let killed = mux::quit_hooks::graceful_kill_all_agents(&mux);
+                if killed > 0 {
+                    log::info!("Signaled {killed} agent process(es) before quit");
+                }
 
                 // Save session before quitting — windows are still alive here
                 if let Err(err) = mux::session::save_session(&mux) {
