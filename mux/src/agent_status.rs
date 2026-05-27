@@ -21,6 +21,14 @@ pub struct AgentPaneStatus {
     /// Number of subagents currently running within this agent session
     /// (e.g. Claude Code's parallel Agent tool invocations).
     pub subagent_count: u32,
+    /// Number of background tasks (Bash run_in_background, Monitor) the
+    /// session has spawned.  Sourced from the `background_tasks` field on
+    /// Claude Code's Stop / SubagentStop hook input (v2.1.145+).
+    pub background_tasks_count: u32,
+    /// Number of scheduled tasks (`/loop`, CronCreate) the session holds.
+    /// Sourced from the `session_crons` field on Claude Code's Stop /
+    /// SubagentStop hook input (v2.1.145+).
+    pub session_crons_count: u32,
     pub updated: Instant,
 }
 
@@ -41,6 +49,8 @@ impl AgentStatusStore {
                 tool: None,
                 last_working_message: None,
                 subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
                 updated: Instant::now(),
             });
         // Guard against the Stop/Notification hook race: when Claude stops
@@ -82,6 +92,8 @@ impl AgentStatusStore {
                 tool: None,
                 last_working_message: None,
                 subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
                 updated: Instant::now(),
             });
         entry.message = Some(message);
@@ -107,9 +119,49 @@ impl AgentStatusStore {
                 tool: None,
                 last_working_message: None,
                 subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
                 updated: Instant::now(),
             });
         entry.subagent_count = count;
+        entry.updated = Instant::now();
+        self.generation += 1;
+    }
+
+    pub fn update_background_tasks_count(&mut self, pane_id: PaneId, count: u32) {
+        let entry = self
+            .statuses
+            .entry(pane_id)
+            .or_insert_with(|| AgentPaneStatus {
+                status: AgentStatus::Idle,
+                message: None,
+                tool: None,
+                last_working_message: None,
+                subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
+                updated: Instant::now(),
+            });
+        entry.background_tasks_count = count;
+        entry.updated = Instant::now();
+        self.generation += 1;
+    }
+
+    pub fn update_session_crons_count(&mut self, pane_id: PaneId, count: u32) {
+        let entry = self
+            .statuses
+            .entry(pane_id)
+            .or_insert_with(|| AgentPaneStatus {
+                status: AgentStatus::Idle,
+                message: None,
+                tool: None,
+                last_working_message: None,
+                subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
+                updated: Instant::now(),
+            });
+        entry.session_crons_count = count;
         entry.updated = Instant::now();
         self.generation += 1;
     }
@@ -390,6 +442,56 @@ mod test {
             status.last_working_message.as_deref(),
             Some("new output")
         );
+    }
+
+    #[test]
+    fn background_tasks_count_updates() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_background_tasks_count(1, 3);
+        assert_eq!(store.get(1).unwrap().background_tasks_count, 3);
+        store.update_background_tasks_count(1, 0);
+        assert_eq!(store.get(1).unwrap().background_tasks_count, 0);
+    }
+
+    #[test]
+    fn background_tasks_count_preserves_status() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_background_tasks_count(1, 2);
+        // Updating the count must not flip the status back to Idle / Working
+        assert_eq!(store.get(1).unwrap().status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn background_tasks_count_creates_entry_if_missing() {
+        let mut store = AgentStatusStore::default();
+        store.update_background_tasks_count(1, 4);
+        let status = store.get(1).unwrap();
+        // No prior status — create as Idle (these counts arrive on Stop hook,
+        // i.e. after the agent has finished).
+        assert_eq!(status.status, AgentStatus::Idle);
+        assert_eq!(status.background_tasks_count, 4);
+    }
+
+    #[test]
+    fn session_crons_count_updates() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_session_crons_count(1, 2);
+        assert_eq!(store.get(1).unwrap().session_crons_count, 2);
+    }
+
+    #[test]
+    fn counts_are_independent() {
+        let mut store = AgentStatusStore::default();
+        store.update_subagent_count(1, 1);
+        store.update_background_tasks_count(1, 2);
+        store.update_session_crons_count(1, 3);
+        let status = store.get(1).unwrap();
+        assert_eq!(status.subagent_count, 1);
+        assert_eq!(status.background_tasks_count, 2);
+        assert_eq!(status.session_crons_count, 3);
     }
 
     #[test]

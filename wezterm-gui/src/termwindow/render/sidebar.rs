@@ -103,12 +103,34 @@ fn sidebar_entry_body_lines(
         }
         if agent.subagent_count > 0 {
             let noun = if agent.subagent_count == 1 {
+                "subagent"
+            } else {
+                "subagents"
+            };
+            lines.push(SidebarLine {
+                text: format!("  \u{2937} {} {noun}", agent.subagent_count),
+                style: SidebarLineStyle::Secondary,
+            });
+        }
+        if agent.background_tasks_count > 0 {
+            let noun = if agent.background_tasks_count == 1 {
                 "background task"
             } else {
                 "background tasks"
             };
             lines.push(SidebarLine {
-                text: format!("  \u{2937} {} {noun}", agent.subagent_count),
+                text: format!("  \u{2937} {} {noun}", agent.background_tasks_count),
+                style: SidebarLineStyle::Secondary,
+            });
+        }
+        if agent.session_crons_count > 0 {
+            let noun = if agent.session_crons_count == 1 {
+                "scheduled task"
+            } else {
+                "scheduled tasks"
+            };
+            lines.push(SidebarLine {
+                text: format!("  \u{2937} {} {noun}", agent.session_crons_count),
                 style: SidebarLineStyle::Secondary,
             });
         }
@@ -1184,6 +1206,8 @@ mod test {
                 status: AgentStatus::Working,
                 status_message: None,
                 subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
             }),
             foreground_process_name: None,
             accent_color: None,

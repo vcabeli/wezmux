@@ -96,6 +96,12 @@ pub struct AgentInfo {
     pub status_message: Option<String>,
     /// Number of subagents running within this agent session.
     pub subagent_count: u32,
+    /// Number of background tasks (Bash run_in_background, Monitor) tracked
+    /// by the agent session.
+    pub background_tasks_count: u32,
+    /// Number of scheduled tasks (`/loop`, CronCreate) tracked by the agent
+    /// session.
+    pub session_crons_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -941,6 +947,14 @@ fn build_agent_info(
         .as_ref()
         .map(|s| s.subagent_count)
         .unwrap_or(0);
+    let background_tasks_count = pane_status
+        .as_ref()
+        .map(|s| s.background_tasks_count)
+        .unwrap_or(0);
+    let session_crons_count = pane_status
+        .as_ref()
+        .map(|s| s.session_crons_count)
+        .unwrap_or(0);
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -977,6 +991,8 @@ fn build_agent_info(
         status,
         status_message,
         subagent_count,
+        background_tasks_count,
+        session_crons_count,
     })
 }
 
