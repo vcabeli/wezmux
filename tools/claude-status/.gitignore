@@ -1,0 +1,11 @@
+# build artifact
+/claude-status
+/claude-tower
+
+# runtime
+/.cache/
+
+# editor
+.DS_Store
+.idea/
+.vscode/
