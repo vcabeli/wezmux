@@ -1283,7 +1283,22 @@ impl TermWindow {
                     window.invalidate();
                 }
                 MuxNotification::Alert {
-                    alert: Alert::ToastNotification { .. } | Alert::WezmuxStatus { .. },
+                    alert: Alert::WezmuxStatus { event, data },
+                    pane_id,
+                } => {
+                    // Play a sound when an agent stops working (goes idle).
+                    // Only the window that owns the pane plays, so we don't
+                    // get one beep per open window.
+                    if event == "status"
+                        && data.as_deref() == Some("idle")
+                        && self.window_contains_pane(pane_id)
+                    {
+                        self.play_agent_stop_sound();
+                    }
+                    window.invalidate();
+                }
+                MuxNotification::Alert {
+                    alert: Alert::ToastNotification { .. },
                     ..
                 } => {
                     window.invalidate();
@@ -1952,6 +1967,20 @@ impl TermWindow {
         };
 
         return window_id == self.mux_window_id;
+    }
+
+    /// Play the configured agent-stop sound, if enabled. Spawns `afplay`
+    /// (macOS) detached so it never blocks the render thread; failures
+    /// (missing file, no afplay) are silently ignored.
+    fn play_agent_stop_sound(&self) {
+        let cfg = &self.config.agent_stop_sound;
+        if !cfg.enabled {
+            return;
+        }
+        let path = cfg.resolve_path();
+        if let Err(err) = std::process::Command::new("afplay").arg(&path).spawn() {
+            log::warn!("failed to play agent stop sound {path}: {err}");
+        }
     }
 
     fn emit_user_var_event(&mut self, pane_id: PaneId, name: String, value: String) {
