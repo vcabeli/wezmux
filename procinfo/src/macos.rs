@@ -310,8 +310,7 @@ fn parse_exe_and_argv_sysctl(buf: Vec<u8>) -> Option<(PathBuf, Vec<String>)> {
 mod tests {
     use std::path::Path;
 
-    use super::parse_exe_and_argv_sysctl;
-    use super::LocalProcessInfo;
+    use super::{parse_exe_and_argv_sysctl, LocalProcessInfo};
 
     #[test]
     fn resolves_own_pid() {
