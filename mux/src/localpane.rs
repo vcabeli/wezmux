@@ -532,11 +532,43 @@ impl Pane for LocalPane {
 
     fn get_foreground_process_info(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
         #[cfg(unix)]
-        if let Some(pid) = self.pty.lock().process_group_leader() {
-            return LocalProcessInfo::with_root_pid(pid as u32);
+        {
+            // Don't hold the pty lock across the process table walk below.
+            let leader = self.pty.lock().process_group_leader();
+            if let Some(pid) = leader {
+                // `AllowStale` shares a process table snapshot with every
+                // other pane, so a caller sweeping all panes walks the table
+                // once rather than once per pane.
+                let max_age = if policy == CachePolicy::FetchImmediate {
+                    Duration::ZERO
+                } else {
+                    PROC_INFO_CACHE_TTL
+                };
+                return LocalProcessInfo::with_root_pid_cached(pid as u32, max_age);
+            }
         }
 
         self.divine_foreground_process(policy)
+    }
+
+    fn foreground_process_leader(&self) -> Option<u32> {
+        #[cfg(unix)]
+        {
+            return self
+                .pty
+                .lock()
+                .process_group_leader()
+                .map(|leader| leader as u32);
+        }
+
+        // No job control concept; the pane's own process is the best answer.
+        #[cfg(not(unix))]
+        {
+            if let ProcessState::Running { pid: Some(pid), .. } = &*self.process.lock() {
+                return Some(*pid);
+            }
+            None
+        }
     }
 
     fn get_foreground_process_name(&self, policy: CachePolicy) -> Option<String> {
@@ -1089,7 +1121,13 @@ impl LocalPane {
 
             if expired {
                 log::trace!("CachedProcInfo expired, refresh");
-                let root = LocalProcessInfo::with_root_pid(*pid)?;
+                // Share the process table snapshot with the other panes
+                // unless the caller explicitly asked for fresh data.
+                let root = if policy == CachePolicy::FetchImmediate {
+                    LocalProcessInfo::with_root_pid(*pid)?
+                } else {
+                    LocalProcessInfo::with_root_pid_cached(*pid, PROC_INFO_CACHE_TTL)?
+                };
 
                 // Windows doesn't have any job control or session concept,
                 // so we infer that the equivalent to the process group

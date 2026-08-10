@@ -20,6 +20,12 @@ use std::time::{Duration, Instant};
 const SIDEBAR_METADATA_COALESCE_DELAY: Duration = Duration::from_millis(200);
 const SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
+/// How long the process table snapshot backing `PaneProcessFacts` may be
+/// reused.  The refresh itself is coalesced to
+/// `SIDEBAR_METADATA_COALESCE_DELAY`, so this only needs to be short enough
+/// that consecutive refreshes don't share a snapshot.
+const PANE_PROCESS_FACTS_TTL: Duration = Duration::from_millis(100);
+
 #[derive(Debug, Clone, Default)]
 pub struct SidebarState {
     pub visible: bool,
@@ -27,7 +33,9 @@ pub struct SidebarState {
     pub override_width: Option<f32>,
     pub scroll_offset: f32,
     pub metadata: HashMap<String, WorkspaceMetadata>,
-    metadata_targets: Vec<WorkspaceMetadataTarget>,
+    /// The last refresh request built by `sidebar_entries`, so we can tell
+    /// when the thing we'd ask the refresh thread for has actually changed.
+    metadata_request: Option<SidebarRefreshRequest>,
     pub metadata_refresh_in_flight: bool,
     pub next_metadata_refresh: Option<Instant>,
     /// Cached sidebar entries from previous frame.
@@ -40,6 +48,16 @@ pub struct SidebarState {
     cached_hovered_workspace: Option<String>,
     /// Agent status store generation at last cache build.
     cached_agent_status_generation: u64,
+    /// Facts derived from each pane's foreground process tree.
+    ///
+    /// Filled in by the metadata refresh thread; the render path only reads
+    /// it.  See [`PaneProcessFacts`].
+    pane_process_facts: HashMap<PaneId, PaneProcessFacts>,
+    /// Bumped whenever `pane_process_facts` actually changes, so that cached
+    /// entries invalidate exactly when the facts they were built from move.
+    pane_facts_generation: u64,
+    /// `pane_facts_generation` at last cache build.
+    cached_pane_facts_generation: u64,
     /// Last detected agent type per pane — survives transient process detection failures.
     pub last_known_agents: HashMap<PaneId, AgentType>,
     /// Workspace targeted by the currently open native context menu, if any.
@@ -104,11 +122,57 @@ pub struct AgentInfo {
     pub session_crons_count: u32,
 }
 
+/// What the sidebar knows about a pane's foreground process.
+///
+/// Deriving these means walking the whole system process table to build the
+/// tree rooted at the pane's foreground pid — far too expensive to do while
+/// painting, and it takes the kernel's global process list lock, so doing it
+/// on the render thread also made frame times hostage to unrelated processes
+/// forking.  It happens on the metadata refresh thread instead; the render
+/// path only reads the result.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaneProcessFacts {
+    /// False when the tree could not be resolved at all — eg: the foreground
+    /// process exited between us reading its pid and walking the table.
+    ///
+    /// This must stay distinguishable from "resolved, and it is not an
+    /// agent", because only the latter means an agent genuinely exited.
+    /// Treating a transient failure as an exit wipes the sidebar preview.
+    pub resolved: bool,
+    /// pid of the foreground process, for the listening-ports lookup.
+    pub pid: Option<u32>,
+    /// Agent detected anywhere in the foreground process tree.
+    pub agent_type: Option<AgentType>,
+    /// cwd of the foreground process — a fallback for the card's path label
+    /// when OSC 7 didn't provide one.
+    pub cwd: Option<PathBuf>,
+    /// An executable name from the tree, for the card's icon.
+    pub foreground_process_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMetadataTarget {
     workspace_name: String,
     cwd_path: PathBuf,
-    process_ids: Vec<u32>,
+    /// Panes belonging to this workspace.  The refresh thread resolves these
+    /// to pids via [`PaneProcessFacts`] and hands them to the ports lookup.
+    pane_ids: Vec<PaneId>,
+}
+
+/// Everything the refresh thread needs, gathered cheaply on the render thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SidebarRefreshRequest {
+    targets: Vec<WorkspaceMetadataTarget>,
+    /// Every pane and the pid of its foreground process.  Reading the pid is
+    /// cheap; resolving what it *is* is not, so that happens off-thread.
+    pane_leaders: Vec<(PaneId, u32)>,
+}
+
+/// Result of a refresh: per-workspace metadata plus the per-pane facts that
+/// were resolved along the way.
+struct SidebarRefreshResult {
+    metadata: HashMap<String, WorkspaceMetadata>,
+    pane_facts: HashMap<PaneId, PaneProcessFacts>,
 }
 
 impl SidebarState {
@@ -153,7 +217,7 @@ impl SidebarState {
             override_width: None,
             scroll_offset: 0.0,
             metadata,
-            metadata_targets: vec![],
+            metadata_request: None,
             metadata_refresh_in_flight: false,
             next_metadata_refresh: None,
             cached_entries: None,
@@ -161,6 +225,9 @@ impl SidebarState {
             cached_active_workspace: String::new(),
             cached_hovered_workspace: None,
             cached_agent_status_generation: 0,
+            pane_process_facts: HashMap::new(),
+            pane_facts_generation: 0,
+            cached_pane_facts_generation: 0,
             last_known_agents: HashMap::new(),
             context_menu_workspace: None,
             workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs::load(),
@@ -196,8 +263,18 @@ impl SidebarState {
         )
     }
 
+    /// Ask for a refresh no later than `delay` from now.
+    ///
+    /// Coalescing, not debouncing: an already-pending earlier deadline wins.
+    /// Overwriting it would let a continuously-outputting pane — every chunk
+    /// of output schedules a refresh — push the deadline back indefinitely and
+    /// starve the refresh exactly when there is most to report.
     pub fn schedule_metadata_refresh(&mut self, delay: Duration) {
-        self.next_metadata_refresh = Some(Instant::now() + delay);
+        let deadline = Instant::now() + delay;
+        self.next_metadata_refresh = Some(match self.next_metadata_refresh {
+            Some(pending) => pending.min(deadline),
+            None => deadline,
+        });
     }
 
     pub fn schedule_metadata_refresh_immediate(&mut self) {
@@ -329,20 +406,34 @@ impl crate::TermWindow {
             })
             .unwrap_or(true);
         let agent_generation = mux.agent_status_generation();
+        let pane_facts_generation = self.sidebar.pane_facts_generation;
         let structural_change = workspace_count != self.sidebar.cached_workspace_count
             || active_workspace != self.sidebar.cached_active_workspace
             || hovered != self.sidebar.cached_hovered_workspace
             || !cached_unread_match
             || !cached_metadata_match
-            || agent_generation != self.sidebar.cached_agent_status_generation;
+            || agent_generation != self.sidebar.cached_agent_status_generation
+            || pane_facts_generation != self.sidebar.cached_pane_facts_generation;
         if !structural_change {
-            if let Some(ref cached) = self.sidebar.cached_entries {
-                return cached.clone();
+            if let Some(cached) = self.sidebar.cached_entries.clone() {
+                // Launching a refresh must not be conditional on the cards
+                // needing a rebuild: the facts they were built from can go
+                // stale — an agent exits, a branch changes — with nothing
+                // here changing to notice it.  Reuse the last request; its
+                // pane list is at most one rebuild out of date.
+                if let Some(request) = self.sidebar.metadata_request.clone() {
+                    self.maybe_refresh_sidebar_metadata(&request);
+                }
+                return cached;
             }
         }
 
         let hovered = hovered.as_deref();
         let mut refresh_targets = vec![];
+        // Collected for the refresh thread.  Reading a pane's foreground pid
+        // is cheap; resolving the process tree behind it is not, so nothing
+        // below this point touches the process table.
+        let mut pane_leaders: Vec<(PaneId, u32)> = vec![];
 
         let mux_workspaces = mux.iter_workspaces();
         let ordered_names = self.sidebar.workspace_configs.apply_order(&mux_workspaces);
@@ -354,8 +445,7 @@ impl crate::TermWindow {
                 let mut cwd_path = None;
                 let mut tab_count = 0;
                 let mut pane_count = 0;
-                let mut process_ids = BTreeSet::new();
-                let mut active_pane_process_info: Option<LocalProcessInfo> = None;
+                let mut workspace_pane_ids = BTreeSet::new();
                 let mut active_pane_id: Option<mux::pane::PaneId> = None;
 
                 for window_id in mux.iter_windows_in_workspace(&name) {
@@ -365,11 +455,9 @@ impl crate::TermWindow {
                             if let Some(tab) = window.get_active() {
                                 title = sidebar_title_from_tab(tab.as_ref())
                                     .unwrap_or_else(|| name.clone());
-                                if active_pane_process_info.is_none() {
+                                if active_pane_id.is_none() {
                                     if let Some(pane) = tab.get_active_pane() {
                                         active_pane_id = Some(pane.pane_id());
-                                        active_pane_process_info = pane
-                                            .get_foreground_process_info(CachePolicy::AllowStale);
                                     }
                                 }
                             }
@@ -377,11 +465,19 @@ impl crate::TermWindow {
                         if cwd.is_none() || cwd_path.is_none() {
                             if let Some((label, path)) = window
                                 .get_active()
-                                .and_then(|tab| sidebar_context_from_active_tab(tab.as_ref()))
+                                .and_then(|tab| {
+                                    sidebar_context_from_active_tab(
+                                        tab.as_ref(),
+                                        &self.sidebar.pane_process_facts,
+                                    )
+                                })
                                 .or_else(|| {
-                                    window
-                                        .iter()
-                                        .find_map(|tab| sidebar_context_from_tab(tab.as_ref()))
+                                    window.iter().find_map(|tab| {
+                                        sidebar_context_from_tab(
+                                            tab.as_ref(),
+                                            &self.sidebar.pane_process_facts,
+                                        )
+                                    })
                                 })
                             {
                                 cwd = label;
@@ -391,16 +487,21 @@ impl crate::TermWindow {
                         for tab in window.iter() {
                             pane_count += tab.count_panes().unwrap_or(0);
                             for positioned in tab.iter_panes() {
-                                if let Some(info) = positioned
-                                    .pane
-                                    .get_foreground_process_info(CachePolicy::AllowStale)
-                                {
-                                    process_ids.insert(info.pid);
+                                let pane_id = positioned.pane.pane_id();
+                                workspace_pane_ids.insert(pane_id);
+                                if let Some(leader) = positioned.pane.foreground_process_leader() {
+                                    pane_leaders.push((pane_id, leader));
                                 }
                             }
                         }
                     }
                 }
+
+                // Read-only: whatever the last refresh resolved for this
+                // pane.  Absent until the first refresh completes, which the
+                // `last_known_agents` fallback in `build_agent_info` covers.
+                let active_pane_facts =
+                    active_pane_id.and_then(|id| self.sidebar.pane_process_facts.get(&id));
 
                 let metadata = self
                     .sidebar
@@ -423,43 +524,23 @@ impl crate::TermWindow {
                         });
                 let unread_count = mux.unread_notification_count_for_workspace(&name);
 
-                // Clear stale agent cache before building agent info.
-                // If we CAN see the foreground process and it's NOT an agent,
-                // the agent has genuinely exited. If process_info is None,
-                // it's a transient detection failure — keep the cache.
-                if let Some(pane_id) = active_pane_id {
-                    if active_pane_process_info.is_some()
-                        && active_pane_process_info
-                            .as_ref()
-                            .and_then(detect_agent_type)
-                            .is_none()
-                    {
-                        self.sidebar.last_known_agents.remove(&pane_id);
-                        mux.remove_agent_status(pane_id);
-                    }
-                }
-
+                // Reaping a departed agent is a *write*, so it does not
+                // happen here — see `reap_departed_agents`, which runs when a
+                // refresh lands.  Building entries must stay read-only: this
+                // function's cache validity is derived from the very state it
+                // would be mutating, so a write here makes each rebuild
+                // invalidate its own cache and repaint forever.
                 let agent = build_agent_info(
-                    active_pane_process_info.as_ref(),
+                    active_pane_facts.and_then(|facts| facts.agent_type),
                     active_pane_id,
                     active_pane_id.and_then(|id| self.sidebar.last_known_agents.get(&id).copied()),
                 );
-
-                // Cache detected agent type so transient process detection
-                // failures don't wipe the preview on the next render frame.
-                if let Some(pane_id) = active_pane_id {
-                    if let Some(ref agent) = agent {
-                        self.sidebar
-                            .last_known_agents
-                            .insert(pane_id, agent.agent_type);
-                    }
-                }
 
                 if let Some(cwd_path) = cwd_path.as_ref() {
                     refresh_targets.push(WorkspaceMetadataTarget {
                         workspace_name: name.clone(),
                         cwd_path: cwd_path.clone(),
-                        process_ids: process_ids.into_iter().collect(),
+                        pane_ids: workspace_pane_ids.into_iter().collect(),
                     });
                 }
 
@@ -475,15 +556,8 @@ impl crate::TermWindow {
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
                 let emoji = self.sidebar.workspace_configs.emoji(&name);
 
-                // Extract foreground process name for icon display
-                let foreground_process_name = active_pane_process_info.as_ref().and_then(|info| {
-                    info.flatten_to_exe_names().into_iter().last().map(|name| {
-                        std::path::Path::new(&name)
-                            .file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or(name)
-                    })
-                });
+                let foreground_process_name =
+                    active_pane_facts.and_then(|facts| facts.foreground_process_name.clone());
 
                 WorkspaceEntry {
                     is_active: active_workspace == name,
@@ -509,14 +583,25 @@ impl crate::TermWindow {
             })
             .collect();
 
-        let targets_changed = refresh_targets != self.sidebar.metadata_targets;
-        let missing_metadata = refresh_targets
+        // Sorted so that a differing iteration order can't masquerade as a
+        // change and trigger a pointless refresh.
+        pane_leaders.sort_unstable();
+        pane_leaders.dedup();
+        let request = SidebarRefreshRequest {
+            targets: refresh_targets,
+            pane_leaders,
+        };
+
+        // A changed request includes a pane whose foreground process changed,
+        // which is exactly when its facts need re-resolving.
+        let request_changed = self.sidebar.metadata_request.as_ref() != Some(&request);
+        let missing_metadata = request
+            .targets
             .iter()
             .any(|target| !self.sidebar.metadata.contains_key(&target.workspace_name));
         let mut scheduled_refresh = false;
 
-        if targets_changed {
-            self.sidebar.metadata_targets = refresh_targets.clone();
+        if request_changed {
             if missing_metadata {
                 self.sidebar.schedule_metadata_refresh_immediate();
             } else {
@@ -535,7 +620,8 @@ impl crate::TermWindow {
             }
         }
 
-        self.maybe_refresh_sidebar_metadata(&refresh_targets);
+        self.maybe_refresh_sidebar_metadata(&request);
+        self.sidebar.metadata_request = Some(request);
 
         // Update cache
         self.sidebar.cached_entries = Some(entries.clone());
@@ -543,8 +629,38 @@ impl crate::TermWindow {
         self.sidebar.cached_active_workspace = active_workspace;
         self.sidebar.cached_hovered_workspace = self.sidebar.hovered_workspace.clone();
         self.sidebar.cached_agent_status_generation = agent_generation;
+        self.sidebar.cached_pane_facts_generation = pane_facts_generation;
 
         entries
+    }
+
+    /// Reconcile the agent caches with what the panes are actually running.
+    ///
+    /// This is the write half of what `sidebar_entries` used to do inline.
+    /// It runs when a refresh lands, so that building entries can stay a pure
+    /// read — the entry cache's validity is derived from the agent status
+    /// generation, so a write from inside the rebuild made every rebuild
+    /// invalidate its own cache and repaint forever.
+    fn reap_departed_agents(&mut self) {
+        let mux = Mux::get();
+
+        for (pane_id, facts) in &self.sidebar.pane_process_facts {
+            match facts.agent_type {
+                // Remember it, so that a later failure to resolve this pane
+                // doesn't blank a card that is still running an agent.
+                Some(agent_type) => {
+                    self.sidebar.last_known_agents.insert(*pane_id, agent_type);
+                }
+                // We could see the process and it is not an agent, so the
+                // agent genuinely exited.
+                None if facts.resolved => {
+                    self.sidebar.last_known_agents.remove(pane_id);
+                    mux.remove_agent_status(*pane_id);
+                }
+                // Unresolved: transient, leave the caches alone.
+                None => {}
+            }
+        }
     }
 
     pub fn schedule_sidebar_metadata_refresh(&mut self) {
@@ -801,8 +917,11 @@ impl crate::TermWindow {
         }
     }
 
-    fn maybe_refresh_sidebar_metadata(&mut self, targets: &[WorkspaceMetadataTarget]) {
-        if !self.sidebar.visible || self.sidebar.metadata_refresh_in_flight || targets.is_empty() {
+    fn maybe_refresh_sidebar_metadata(&mut self, request: &SidebarRefreshRequest) {
+        if !self.sidebar.visible
+            || self.sidebar.metadata_refresh_in_flight
+            || (request.targets.is_empty() && request.pane_leaders.is_empty())
+        {
             return;
         }
 
@@ -813,7 +932,7 @@ impl crate::TermWindow {
             return;
         }
 
-        let targets = targets.to_vec();
+        let request = request.clone();
         let Some(window) = self.window.as_ref().cloned() else {
             return;
         };
@@ -824,15 +943,15 @@ impl crate::TermWindow {
 
         spawn(async move {
             let result = spawn_into_new_thread(move || {
-                Ok(collect_sidebar_metadata(targets, existing_metadata))
+                Ok(collect_sidebar_metadata(request, existing_metadata))
             })
             .await;
 
             match result {
-                Ok(metadata) => {
+                Ok(refreshed) => {
                     window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
                         move |term_window| {
-                            term_window.finish_sidebar_metadata_refresh(metadata);
+                            term_window.finish_sidebar_metadata_refresh(refreshed);
                         },
                     )));
                 }
@@ -849,7 +968,25 @@ impl crate::TermWindow {
         .detach();
     }
 
-    fn finish_sidebar_metadata_refresh(&mut self, metadata: HashMap<String, WorkspaceMetadata>) {
+    fn finish_sidebar_metadata_refresh(&mut self, refreshed: SidebarRefreshResult) {
+        let SidebarRefreshResult {
+            metadata,
+            pane_facts,
+        } = refreshed;
+
+        // Only move the facts generation when the facts actually changed —
+        // the sidebar entry cache keys off it, and rebuilding is wasted work
+        // if the answer is identical.
+        if pane_facts != self.sidebar.pane_process_facts {
+            self.sidebar.pane_process_facts = pane_facts;
+            self.sidebar.pane_facts_generation += 1;
+        }
+
+        // Now that we know what each pane is actually running, reap agents
+        // that have exited.  This is the write half of what `sidebar_entries`
+        // used to do inline; doing it here keeps entry building read-only.
+        self.reap_departed_agents();
+
         // Sync to Mux for session persistence
         if let Some(mux) = mux::Mux::try_get() {
             let cache: HashMap<String, mux::session::SidebarCacheSerde> = metadata
@@ -922,12 +1059,10 @@ fn agent_type_display_name(agent_type: AgentType) -> String {
 }
 
 fn build_agent_info(
-    process_info: Option<&LocalProcessInfo>,
+    detected_type: Option<AgentType>,
     pane_id: Option<mux::pane::PaneId>,
     cached_agent_type: Option<AgentType>,
 ) -> Option<AgentInfo> {
-    let detected_type = process_info.and_then(detect_agent_type);
-
     // Check the structured status store (populated via OSC 7777)
     let pane_status = pane_id.and_then(|id| Mux::get().agent_status_for_pane(id));
 
@@ -1037,21 +1172,28 @@ fn sidebar_title_from_pane(pane: Arc<dyn mux::pane::Pane>) -> Option<String> {
 
 fn sidebar_context_from_active_tab(
     tab: &mux::tab::Tab,
+    facts: &HashMap<PaneId, PaneProcessFacts>,
 ) -> Option<(Option<String>, Option<PathBuf>)> {
     tab.get_active_pane()
-        .and_then(sidebar_context_from_pane)
-        .or_else(|| sidebar_context_from_tab(tab))
+        .and_then(|pane| sidebar_context_from_pane(pane, facts))
+        .or_else(|| sidebar_context_from_tab(tab, facts))
 }
 
-fn sidebar_context_from_tab(tab: &mux::tab::Tab) -> Option<(Option<String>, Option<PathBuf>)> {
+fn sidebar_context_from_tab(
+    tab: &mux::tab::Tab,
+    facts: &HashMap<PaneId, PaneProcessFacts>,
+) -> Option<(Option<String>, Option<PathBuf>)> {
     tab.iter_panes()
         .into_iter()
-        .find_map(|positioned| sidebar_context_from_pane(positioned.pane))
+        .find_map(|positioned| sidebar_context_from_pane(positioned.pane, facts))
 }
 
 fn sidebar_context_from_pane(
     pane: Arc<dyn mux::pane::Pane>,
+    facts: &HashMap<PaneId, PaneProcessFacts>,
 ) -> Option<(Option<String>, Option<PathBuf>)> {
+    // Cheap: served from the pty leader cache, which refreshes itself in the
+    // background.
     let cwd_url = pane.get_current_working_dir(CachePolicy::AllowStale);
     let cwd_label = cwd_url.as_ref().and_then(sidebar_path_label);
     let cwd_path = cwd_url.as_ref().and_then(sidebar_path);
@@ -1060,17 +1202,17 @@ fn sidebar_context_from_pane(
         return Some((cwd_label, cwd_path));
     }
 
-    pane.get_foreground_process_info(CachePolicy::AllowStale)
-        .and_then(|info| {
-            if info.cwd.as_os_str().is_empty() {
-                None
-            } else {
-                let path = info.cwd;
-                let label = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string());
-                Some((label, Some(path)))
-            }
+    // Otherwise fall back to the foreground process's cwd as resolved by the
+    // last refresh.  Deriving it here would mean walking the process table
+    // during paint.
+    facts
+        .get(&pane.pane_id())
+        .and_then(|facts| facts.cwd.clone())
+        .map(|path| {
+            let label = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string());
+            (label, Some(path))
         })
 }
 
@@ -1101,20 +1243,83 @@ fn sidebar_path_label(url: &Url) -> Option<String> {
 }
 
 fn collect_sidebar_metadata(
-    targets: Vec<WorkspaceMetadataTarget>,
+    request: SidebarRefreshRequest,
     existing_metadata: HashMap<String, WorkspaceMetadata>,
-) -> HashMap<String, WorkspaceMetadata> {
-    let mut metadata = HashMap::new();
+) -> SidebarRefreshResult {
+    // Resolve every pane's foreground process first.  This is the expensive
+    // part, and the reason this function runs on a worker thread rather than
+    // during paint.
+    let pane_facts = resolve_pane_process_facts(&request.pane_leaders);
 
-    for target in targets {
+    let mut metadata = HashMap::new();
+    for target in request.targets {
+        // Deduped: sibling panes can share a foreground process group, and
+        // this becomes an `lsof -p` argument.
+        let process_ids: Vec<u32> = target
+            .pane_ids
+            .iter()
+            .filter_map(|pane_id| pane_facts.get(pane_id).and_then(|facts| facts.pid))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let previous = existing_metadata.get(&target.workspace_name);
         metadata.insert(
             target.workspace_name.clone(),
-            load_workspace_metadata(&target.cwd_path, &target.process_ids, previous),
+            load_workspace_metadata(&target.cwd_path, &process_ids, previous),
         );
     }
 
-    metadata
+    SidebarRefreshResult {
+        metadata,
+        pane_facts,
+    }
+}
+
+/// Resolve what each pane is running.
+///
+/// Every lookup shares one snapshot of the system process table, so this
+/// costs a single walk regardless of how many panes are open.
+fn resolve_pane_process_facts(pane_leaders: &[(PaneId, u32)]) -> HashMap<PaneId, PaneProcessFacts> {
+    pane_leaders
+        .iter()
+        .map(|&(pane_id, leader_pid)| {
+            let facts =
+                match LocalProcessInfo::with_root_pid_cached(leader_pid, PANE_PROCESS_FACTS_TTL) {
+                    Some(info) => PaneProcessFacts {
+                        resolved: true,
+                        pid: Some(info.pid),
+                        agent_type: detect_agent_type(&info),
+                        cwd: if info.cwd.as_os_str().is_empty() {
+                            None
+                        } else {
+                            Some(info.cwd.clone())
+                        },
+                        foreground_process_name: tree_process_name(&info),
+                    },
+                    // Leader already gone — a transient failure, not evidence
+                    // that whatever was running here has exited.
+                    None => PaneProcessFacts::default(),
+                };
+            (pane_id, facts)
+        })
+        .collect()
+}
+
+/// Pick an executable name out of a process tree, for the card's icon.
+///
+/// Sorted rather than taken in hash order: `flatten_to_exe_names` returns a
+/// `HashSet`, so an arbitrary pick would vary between refreshes, make the
+/// facts compare unequal every time, and force a rebuild for no visible
+/// reason (it would also flicker the icon).
+fn tree_process_name(info: &LocalProcessInfo) -> Option<String> {
+    let mut names: Vec<String> = info.flatten_to_exe_names().into_iter().collect();
+    names.sort();
+    names.pop().map(|name| {
+        Path::new(&name)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or(name)
+    })
 }
 
 fn load_workspace_metadata(
@@ -1295,9 +1500,28 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 #[cfg(test)]
 mod test {
     use super::{
-        WorkspacePullRequest, WorkspacePullRequestStatus,
+        SidebarState, WorkspacePullRequest, WorkspacePullRequestStatus,
         parse_listening_ports, parse_pull_request,
     };
+    use std::time::Duration;
+
+    #[test]
+    fn metadata_refresh_coalesces_rather_than_postponing() {
+        let mut state = SidebarState::default();
+
+        state.schedule_metadata_refresh(Duration::from_millis(200));
+        let first = state.next_metadata_refresh.expect("should be scheduled");
+
+        // Every chunk of pane output asks for a refresh.  A later request must
+        // not push the deadline back, or a continuously outputting pane starves
+        // the refresh forever — which is when it matters most.
+        state.schedule_metadata_refresh(Duration::from_millis(200));
+        assert_eq!(state.next_metadata_refresh, Some(first));
+
+        // An *earlier* deadline should still win.
+        state.schedule_metadata_refresh(Duration::ZERO);
+        assert!(state.next_metadata_refresh.expect("still scheduled") <= first);
+    }
 
     #[test]
     fn parses_listening_ports_from_lsof_output() {

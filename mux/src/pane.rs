@@ -329,6 +329,17 @@ pub trait Pane: Downcast + Send + Sync {
         None
     }
 
+    /// The pid of the pane's foreground process, without resolving anything
+    /// about it.
+    ///
+    /// Cheap, unlike `get_foreground_process_info`, which has to walk the
+    /// whole system process table to build the tree rooted at this pid.
+    /// Callers that only need a pid to hand to a worker thread — so the walk
+    /// happens off the render thread — should prefer this.
+    fn foreground_process_leader(&self) -> Option<u32> {
+        None
+    }
+
     fn tty_name(&self) -> Option<String> {
         None
     }
