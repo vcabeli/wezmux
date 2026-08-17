@@ -39,12 +39,21 @@ pub struct AgentStatusStore {
 }
 
 impl AgentStatusStore {
-    pub fn update_status(&mut self, pane_id: PaneId, status: AgentStatus) {
+    /// Fetch the entry for `pane_id`, creating it with `default_status` if
+    /// absent.  The returned flag is true when the entry was just created,
+    /// which is itself a sidebar-visible change even if every field the
+    /// caller goes on to write happens to match the default.
+    fn entry_mut(
+        &mut self,
+        pane_id: PaneId,
+        default_status: AgentStatus,
+    ) -> (&mut AgentPaneStatus, bool) {
+        let is_new = !self.statuses.contains_key(&pane_id);
         let entry = self
             .statuses
             .entry(pane_id)
             .or_insert_with(|| AgentPaneStatus {
-                status: status.clone(),
+                status: default_status,
                 message: None,
                 tool: None,
                 last_working_message: None,
@@ -53,6 +62,26 @@ impl AgentStatusStore {
                 session_crons_count: 0,
                 updated: Instant::now(),
             });
+        (entry, is_new)
+    }
+
+    // Every mutator below follows the same contract:
+    //
+    // * `updated` is refreshed on every call, because the NeedsInput sticky
+    //   guard in `update_status` reads it as "when did we last hear from this
+    //   agent", and that must not depend on whether the value changed.
+    // * `generation` moves *only* when a sidebar-visible field actually
+    //   changed.  The sidebar reads it as "your cached cards are stale" and
+    //   a rebuild is expensive, so writing the same value twice must be
+    //   invisible.  Agents re-send unchanged values constantly — a Stop hook
+    //   reports `session_crons` and `background_tasks` every time, and
+    //   consecutive tool calls report the same tool name — so treating a
+    //   no-op write as a change means rebuilding for nothing thousands of
+    //   times per session.
+
+    pub fn update_status(&mut self, pane_id: PaneId, status: AgentStatus) {
+        let (entry, is_new) = self.entry_mut(pane_id, status.clone());
+
         // Guard against the Stop/Notification hook race: when Claude stops
         // for plan approval, both hooks fire concurrently.  If Notification
         // sets NeedsInput first and Stop's Idle arrives within a short
@@ -63,11 +92,17 @@ impl AgentStatusStore {
         {
             return;
         }
+
+        let mut changed = is_new;
+
         // When leaving Working, snapshot the current message as the
         // last working output so the sidebar shows it while idle.
         if matches!(entry.status, AgentStatus::Working) && !matches!(status, AgentStatus::Working) {
-            if let Some(ref msg) = entry.message {
-                entry.last_working_message = Some(msg.clone());
+            if let Some(msg) = entry.message.clone() {
+                if entry.last_working_message.as_ref() != Some(&msg) {
+                    entry.last_working_message = Some(msg);
+                    changed = true;
+                }
             }
         }
         // When entering Working, clear the current message so stale
@@ -75,111 +110,98 @@ impl AgentStatusStore {
         // Keep last_working_message as a fallback preview until new
         // output arrives — clearing it causes blank sidebar cards.
         if matches!(status, AgentStatus::Working) && !matches!(entry.status, AgentStatus::Working) {
-            entry.message = None;
+            if entry.message.is_some() {
+                entry.message = None;
+                changed = true;
+            }
         }
-        entry.status = status;
+        if entry.status != status {
+            entry.status = status;
+            changed = true;
+        }
         entry.updated = Instant::now();
-        self.generation += 1;
-    }
 
-    pub fn update_message(&mut self, pane_id: PaneId, message: String) {
-        let entry = self
-            .statuses
-            .entry(pane_id)
-            .or_insert_with(|| AgentPaneStatus {
-                status: AgentStatus::Working,
-                message: None,
-                tool: None,
-                last_working_message: None,
-                subagent_count: 0,
-                background_tasks_count: 0,
-                session_crons_count: 0,
-                updated: Instant::now(),
-            });
-        entry.message = Some(message);
-        entry.updated = Instant::now();
-        self.generation += 1;
-    }
-
-    pub fn update_tool(&mut self, pane_id: PaneId, tool: String) {
-        if let Some(entry) = self.statuses.get_mut(&pane_id) {
-            entry.tool = Some(tool);
-            entry.updated = Instant::now();
+        if changed {
             self.generation += 1;
         }
     }
 
+    pub fn update_message(&mut self, pane_id: PaneId, message: String) {
+        let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Working);
+        let changed = is_new || entry.message.as_deref() != Some(message.as_str());
+        entry.message = Some(message);
+        entry.updated = Instant::now();
+        if changed {
+            self.generation += 1;
+        }
+    }
+
+    pub fn update_tool(&mut self, pane_id: PaneId, tool: String) {
+        if let Some(entry) = self.statuses.get_mut(&pane_id) {
+            let changed = entry.tool.as_deref() != Some(tool.as_str());
+            entry.tool = Some(tool);
+            entry.updated = Instant::now();
+            if changed {
+                self.generation += 1;
+            }
+        }
+    }
+
     pub fn update_subagent_count(&mut self, pane_id: PaneId, count: u32) {
-        let entry = self
-            .statuses
-            .entry(pane_id)
-            .or_insert_with(|| AgentPaneStatus {
-                status: AgentStatus::Working,
-                message: None,
-                tool: None,
-                last_working_message: None,
-                subagent_count: 0,
-                background_tasks_count: 0,
-                session_crons_count: 0,
-                updated: Instant::now(),
-            });
+        let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Working);
+        let changed = is_new || entry.subagent_count != count;
         entry.subagent_count = count;
         entry.updated = Instant::now();
-        self.generation += 1;
+        if changed {
+            self.generation += 1;
+        }
     }
 
     pub fn update_background_tasks_count(&mut self, pane_id: PaneId, count: u32) {
-        let entry = self
-            .statuses
-            .entry(pane_id)
-            .or_insert_with(|| AgentPaneStatus {
-                status: AgentStatus::Idle,
-                message: None,
-                tool: None,
-                last_working_message: None,
-                subagent_count: 0,
-                background_tasks_count: 0,
-                session_crons_count: 0,
-                updated: Instant::now(),
-            });
+        let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Idle);
+        let changed = is_new || entry.background_tasks_count != count;
         entry.background_tasks_count = count;
         entry.updated = Instant::now();
-        self.generation += 1;
+        if changed {
+            self.generation += 1;
+        }
     }
 
     pub fn update_session_crons_count(&mut self, pane_id: PaneId, count: u32) {
-        let entry = self
-            .statuses
-            .entry(pane_id)
-            .or_insert_with(|| AgentPaneStatus {
-                status: AgentStatus::Idle,
-                message: None,
-                tool: None,
-                last_working_message: None,
-                subagent_count: 0,
-                background_tasks_count: 0,
-                session_crons_count: 0,
-                updated: Instant::now(),
-            });
+        let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Idle);
+        let changed = is_new || entry.session_crons_count != count;
         entry.session_crons_count = count;
         entry.updated = Instant::now();
-        self.generation += 1;
+        if changed {
+            self.generation += 1;
+        }
     }
 
     pub fn clear(&mut self, pane_id: PaneId) {
         // Don't remove — preserve last known message/status so the sidebar
         // keeps showing agent info as long as the process is alive.
         // Only reset status to Idle; keep message and tool for context.
+        //
+        // Same contract as the mutators above: always refresh `updated`,
+        // but only move the generation when the status actually changed.
         if let Some(entry) = self.statuses.get_mut(&pane_id) {
+            let changed = !matches!(entry.status, AgentStatus::Idle);
             entry.status = AgentStatus::Idle;
             entry.updated = Instant::now();
+            if changed {
+                self.generation += 1;
+            }
         }
-        self.generation += 1;
     }
 
     pub fn remove(&mut self, pane_id: PaneId) {
-        self.statuses.remove(&pane_id);
-        self.generation += 1;
+        // Likewise: only signal a change if there was an entry to remove.
+        // `sidebar_entries` calls this for every non-agent pane while it
+        // rebuilds, so bumping unconditionally makes the rebuild invalidate
+        // its own cache and repaint forever.
+        if self.statuses.remove(&pane_id).is_some() {
+            self.generation += 1;
+        }
     }
 
     pub fn get(&self, pane_id: PaneId) -> Option<&AgentPaneStatus> {
@@ -248,6 +270,180 @@ mod test {
         store.update_status(1, AgentStatus::Working);
         store.remove(1);
         assert!(store.get(1).is_none());
+    }
+
+    // The sidebar rebuild treats a generation bump as "your cached cards are
+    // stale", and it calls remove/clear for panes it decides aren't agents
+    // *while* it rebuilds.  If a no-op call bumps the generation, the rebuild
+    // invalidates its own cache and the sidebar repaints forever, walking the
+    // system process table for every pane on every frame.
+
+    #[test]
+    fn remove_of_absent_pane_does_not_bump_generation() {
+        let mut store = AgentStatusStore::default();
+        let before = store.generation();
+        store.remove(42);
+        assert_eq!(store.generation(), before);
+    }
+
+    #[test]
+    fn clear_of_absent_pane_does_not_bump_generation() {
+        let mut store = AgentStatusStore::default();
+        let before = store.generation();
+        store.clear(42);
+        assert_eq!(store.generation(), before);
+    }
+
+    #[test]
+    fn clear_of_already_idle_pane_does_not_bump_generation() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Idle);
+        let before = store.generation();
+        store.clear(1);
+        assert_eq!(store.generation(), before);
+    }
+
+    #[test]
+    fn repeated_identical_writes_do_not_bump_generation() {
+        let mut store = AgentStatusStore::default();
+
+        // Prime every field, then re-send exactly the same values.  Agents do
+        // this constantly: a Stop hook reports session_crons/background_tasks
+        // every time, and consecutive Bash calls report the same tool.
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "same".to_string());
+        store.update_tool(1, "Bash".to_string());
+        store.update_subagent_count(1, 2);
+        store.update_background_tasks_count(1, 4);
+        store.update_session_crons_count(1, 0);
+
+        let settled = store.generation();
+
+        for _ in 0..5 {
+            store.update_status(1, AgentStatus::Working);
+            store.update_message(1, "same".to_string());
+            store.update_tool(1, "Bash".to_string());
+            store.update_subagent_count(1, 2);
+            store.update_background_tasks_count(1, 4);
+            store.update_session_crons_count(1, 0);
+        }
+
+        assert_eq!(
+            store.generation(),
+            settled,
+            "re-sending identical values must not invalidate the sidebar cache"
+        );
+
+        // ...but the values are still there.
+        let status = store.get(1).unwrap();
+        assert_eq!(status.message.as_deref(), Some("same"));
+        assert_eq!(status.tool.as_deref(), Some("Bash"));
+        assert_eq!(status.subagent_count, 2);
+        assert_eq!(status.background_tasks_count, 4);
+        assert_eq!(status.session_crons_count, 0);
+    }
+
+    #[test]
+    fn each_field_change_bumps_generation() {
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "a".to_string());
+        store.update_tool(1, "Bash".to_string());
+        store.update_subagent_count(1, 1);
+        store.update_background_tasks_count(1, 1);
+        store.update_session_crons_count(1, 1);
+
+        // Each of these is a real change and must be visible to the sidebar.
+        let mut prev = store.generation();
+        for (label, apply) in [
+            (
+                "message",
+                Box::new(|s: &mut AgentStatusStore| s.update_message(1, "b".to_string()))
+                    as Box<dyn Fn(&mut AgentStatusStore)>,
+            ),
+            (
+                "tool",
+                Box::new(|s: &mut AgentStatusStore| s.update_tool(1, "Read".to_string())),
+            ),
+            (
+                "subagents",
+                Box::new(|s: &mut AgentStatusStore| s.update_subagent_count(1, 3)),
+            ),
+            (
+                "background_tasks",
+                Box::new(|s: &mut AgentStatusStore| s.update_background_tasks_count(1, 7)),
+            ),
+            (
+                "session_crons",
+                Box::new(|s: &mut AgentStatusStore| s.update_session_crons_count(1, 9)),
+            ),
+            (
+                "status",
+                Box::new(|s: &mut AgentStatusStore| s.update_status(1, AgentStatus::NeedsInput)),
+            ),
+        ] {
+            apply(&mut store);
+            assert!(
+                store.generation() > prev,
+                "changing {label} should bump the generation"
+            );
+            prev = store.generation();
+        }
+    }
+
+    #[test]
+    fn creating_an_entry_bumps_even_when_values_match_defaults() {
+        // A brand new entry is a new sidebar card, so it counts as a change
+        // even though `0` matches the default the entry is created with.
+        let mut store = AgentStatusStore::default();
+        let before = store.generation();
+        store.update_session_crons_count(7, 0);
+        assert!(store.generation() > before);
+        assert!(store.get(7).is_some());
+    }
+
+    #[test]
+    fn no_op_write_still_refreshes_updated() {
+        // `updated` feeds the 3s NeedsInput sticky guard, so it must keep
+        // advancing even when the generation doesn't.
+        let mut store = AgentStatusStore::default();
+        store.update_status(1, AgentStatus::NeedsInput);
+        let first = store.get(1).unwrap().updated;
+        let gen = store.generation();
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        store.update_status(1, AgentStatus::NeedsInput);
+
+        assert!(
+            store.get(1).unwrap().updated > first,
+            "a repeated status must still refresh `updated`"
+        );
+        assert_eq!(
+            store.generation(),
+            gen,
+            "...without invalidating the sidebar cache"
+        );
+    }
+
+    #[test]
+    fn real_changes_still_bump_generation() {
+        let mut store = AgentStatusStore::default();
+
+        store.update_status(1, AgentStatus::Working);
+        let after_status = store.generation();
+
+        store.clear(1);
+        let after_clear = store.generation();
+        assert!(
+            after_clear > after_status,
+            "clearing a Working pane is a real change"
+        );
+
+        store.remove(1);
+        assert!(
+            store.generation() > after_clear,
+            "removing a present pane is a real change"
+        );
     }
 
     #[test]

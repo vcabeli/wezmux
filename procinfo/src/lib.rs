@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[cfg(feature = "lua")]
 use wezterm_dynamic::{FromDynamic, ToDynamic};
@@ -80,6 +81,30 @@ impl LocalProcessInfo {
 
         flatten(self, &mut names);
         names
+    }
+
+    /// Like [`Self::with_root_pid`], but allowed to answer from a snapshot of
+    /// the system process table captured up to `max_age` ago.
+    ///
+    /// Resolving a tree means enumerating every process on the system, which
+    /// is expensive and contends with process creation machine-wide, so
+    /// callers that want many trees at once (eg: the foreground process of
+    /// every pane, once per rendered frame) should prefer this.
+    ///
+    /// A pid that was spawned after the snapshot was taken resolves to `None`
+    /// until the snapshot expires, so callers must tolerate a miss for a
+    /// freshly spawned process.  Pass `Duration::ZERO` to force a fresh read.
+    pub fn with_root_pid_cached(pid: u32, max_age: Duration) -> Option<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            Self::with_root_pid_snapshot(pid, max_age)
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = max_age;
+            Self::with_root_pid(pid)
+        }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
