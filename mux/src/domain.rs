@@ -196,6 +196,26 @@ pub trait Domain: Downcast + Send + Sync {
 
     /// Indicates the state of the domain
     fn state(&self) -> DomainState;
+
+    /// Gather the sidebar metadata for `workspace`, or `None` if no working
+    /// directory could be resolved for it.
+    ///
+    /// The default gathers in this process; a domain whose panes live on
+    /// another host overrides this to ask that host. Runs git/gh/lsof, so
+    /// implementations must keep that work off the calling thread.
+    async fn workspace_metadata(
+        &self,
+        workspace: &str,
+        want_pull_request: bool,
+    ) -> Option<crate::workspace_metadata::WorkspaceMetadataSnapshot> {
+        let request =
+            crate::workspace_metadata::request_for_workspace(workspace, want_pull_request)?;
+        promise::spawn::spawn_into_new_thread(move || {
+            Ok(crate::workspace_metadata::gather(&request))
+        })
+        .await
+        .ok()
+    }
 }
 impl_downcast!(Domain);
 

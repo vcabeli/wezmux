@@ -54,6 +54,7 @@ mod tmux_pty;
 #[cfg(target_os = "macos")]
 pub(crate) mod wezmux_zdotdir;
 pub mod window;
+pub mod workspace_metadata;
 
 use crate::activity::Activity;
 

@@ -1,12 +1,9 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
-use git2::{Repository, StatusOptions};
 use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
-use promise::spawn::{spawn, spawn_into_new_thread};
-use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use promise::spawn::spawn;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use url::Url;
 use window::WindowOps;
 
@@ -58,18 +55,8 @@ pub struct WorkspaceMetadata {
     pull_request_checked_at: Option<Instant>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspacePullRequestStatus {
-    Open,
-    Merged,
-    Closed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspacePullRequest {
-    pub number: u64,
-    pub status: WorkspacePullRequestStatus,
-}
+pub type WorkspacePullRequestStatus = mux::workspace_metadata::PullRequestStatus;
+pub type WorkspacePullRequest = mux::workspace_metadata::PullRequestInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentType {
@@ -98,11 +85,12 @@ pub struct AgentInfo {
     pub subagent_count: u32,
 }
 
+/// A workspace to refresh, and the domain that owns its panes and so answers
+/// for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMetadataTarget {
     workspace_name: String,
-    cwd_path: PathBuf,
-    process_ids: Vec<u32>,
+    domain_id: mux::domain::DomainId,
 }
 
 impl SidebarState {
@@ -345,9 +333,9 @@ impl crate::TermWindow {
                 let mut cwd_path = None;
                 let mut tab_count = 0;
                 let mut pane_count = 0;
-                let mut process_ids = BTreeSet::new();
                 let mut active_pane_process_info: Option<LocalProcessInfo> = None;
                 let mut active_pane_id: Option<mux::pane::PaneId> = None;
+                let mut domain_id: Option<mux::domain::DomainId> = None;
 
                 for window_id in mux.iter_windows_in_workspace(&name) {
                     if let Some(window) = mux.get_window(window_id) {
@@ -365,6 +353,17 @@ impl crate::TermWindow {
                                 }
                             }
                         }
+                        if domain_id.is_none() {
+                            domain_id = window
+                                .get_active()
+                                .and_then(|tab| tab.get_active_pane())
+                                .or_else(|| {
+                                    window.iter().find_map(|tab| {
+                                        tab.iter_panes().into_iter().next().map(|p| p.pane)
+                                    })
+                                })
+                                .map(|pane| pane.domain_id());
+                        }
                         if cwd.is_none() || cwd_path.is_none() {
                             if let Some((label, path)) = window
                                 .get_active()
@@ -381,14 +380,6 @@ impl crate::TermWindow {
                         }
                         for tab in window.iter() {
                             pane_count += tab.count_panes().unwrap_or(0);
-                            for positioned in tab.iter_panes() {
-                                if let Some(info) = positioned
-                                    .pane
-                                    .get_foreground_process_info(CachePolicy::AllowStale)
-                                {
-                                    process_ids.insert(info.pid);
-                                }
-                            }
                         }
                     }
                 }
@@ -446,11 +437,10 @@ impl crate::TermWindow {
                     }
                 }
 
-                if let Some(cwd_path) = cwd_path.as_ref() {
+                if let Some(domain_id) = domain_id {
                     refresh_targets.push(WorkspaceMetadataTarget {
                         workspace_name: name.clone(),
-                        cwd_path: cwd_path.clone(),
-                        process_ids: process_ids.into_iter().collect(),
+                        domain_id,
                     });
                 }
 
@@ -785,28 +775,12 @@ impl crate::TermWindow {
         let existing_metadata = self.sidebar.metadata.clone();
 
         spawn(async move {
-            let result = spawn_into_new_thread(move || {
-                Ok(collect_sidebar_metadata(targets, existing_metadata))
-            })
-            .await;
-
-            match result {
-                Ok(metadata) => {
-                    window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                        move |term_window| {
-                            term_window.finish_sidebar_metadata_refresh(metadata);
-                        },
-                    )));
-                }
-                Err(err) => {
-                    log::error!("Failed to refresh sidebar metadata: {err:#}");
-                    window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                        move |term_window| {
-                            term_window.sidebar.metadata_refresh_in_flight = false;
-                        },
-                    )));
-                }
-            }
+            let metadata = collect_sidebar_metadata(targets, existing_metadata).await;
+            window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                move |term_window| {
+                    term_window.finish_sidebar_metadata_refresh(metadata);
+                },
+            )));
         })
         .detach();
     }
@@ -950,11 +924,7 @@ fn build_agent_info(
 }
 
 fn sidebar_path(url: &Url) -> Option<PathBuf> {
-    if url.scheme() == "file" {
-        return url.to_file_path().ok();
-    }
-
-    None
+    mux::workspace_metadata::path_from_cwd_url(url)
 }
 
 fn sidebar_title_from_tab(tab: &mux::tab::Tab) -> Option<String> {
@@ -1052,228 +1022,225 @@ fn sidebar_path_label(url: &Url) -> Option<String> {
         })
 }
 
-fn collect_sidebar_metadata(
+/// Ask each workspace's owning domain for its metadata, merging the answer
+/// with what we already knew.
+async fn collect_sidebar_metadata(
     targets: Vec<WorkspaceMetadataTarget>,
     existing_metadata: HashMap<String, WorkspaceMetadata>,
 ) -> HashMap<String, WorkspaceMetadata> {
+    let mux = Mux::get();
     let mut metadata = HashMap::new();
 
     for target in targets {
         let previous = existing_metadata.get(&target.workspace_name);
+        let Some(domain) = mux.get_domain(target.domain_id) else {
+            // Domain went away mid-refresh; keep what we had.
+            if let Some(previous) = previous {
+                metadata.insert(target.workspace_name.clone(), previous.clone());
+            }
+            continue;
+        };
+
+        let want_pull_request = wants_pull_request_refresh(previous);
+        let snapshot = domain
+            .workspace_metadata(&target.workspace_name, want_pull_request)
+            .await;
+
         metadata.insert(
             target.workspace_name.clone(),
-            load_workspace_metadata(&target.cwd_path, &target.process_ids, previous),
+            merge_workspace_metadata(snapshot, want_pull_request, previous),
         );
     }
 
     metadata
 }
 
-fn load_workspace_metadata(
-    cwd_path: &Path,
-    process_ids: &[u32],
-    existing: Option<&WorkspaceMetadata>,
-) -> WorkspaceMetadata {
-    let repo = Repository::discover(cwd_path).ok();
-    let git_branch = repo.as_ref().and_then(|repo| {
-        repo.head().ok().and_then(|head| {
-            head.shorthand()
-                .map(ToString::to_string)
-                .or_else(|| head.target().map(|oid| oid.to_string()[..7].to_string()))
-        })
-    });
-    let now = Instant::now();
-    let should_refresh_pull_request = existing
-        .and_then(|metadata| {
-            let branch_matches =
-                metadata.pull_request_checked_for_branch.as_deref() == git_branch.as_deref();
-            let fresh_enough = metadata
-                .pull_request_checked_at
-                .map(|checked_at| {
-                    now.duration_since(checked_at) < SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL
-                })
-                .unwrap_or(false);
-            if branch_matches && fresh_enough {
-                Some(false)
-            } else {
-                Some(true)
-            }
-        })
-        .unwrap_or(true);
+/// Whether to re-check the pull request: never checked, the interval elapsed,
+/// or the branch moved since the last check.
+fn wants_pull_request_refresh(previous: Option<&WorkspaceMetadata>) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
 
-    let pull_request = if should_refresh_pull_request {
-        repo.as_ref().and_then(|repo| {
-            repo.workdir()
-                .or_else(|| repo.path().parent())
-                .and_then(load_pull_request)
-        })
-    } else {
-        existing.and_then(|metadata| metadata.pull_request.clone())
+    let branch_matches =
+        previous.pull_request_checked_for_branch.as_deref() == previous.git_branch.as_deref();
+    let fresh_enough = previous
+        .pull_request_checked_at
+        .map(|checked_at| checked_at.elapsed() < SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL)
+        .unwrap_or(false);
+
+    !(branch_matches && fresh_enough)
+}
+
+fn merge_workspace_metadata(
+    snapshot: Option<mux::workspace_metadata::WorkspaceMetadataSnapshot>,
+    want_pull_request: bool,
+    previous: Option<&WorkspaceMetadata>,
+) -> WorkspaceMetadata {
+    let Some(snapshot) = snapshot else {
+        // No working directory resolved yet; keep what we had.
+        return previous.cloned().unwrap_or_default();
     };
-    let pull_request_checked_for_branch = if should_refresh_pull_request {
-        repo.as_ref().and_then(|_| git_branch.clone())
-    } else {
-        existing.and_then(|metadata| metadata.pull_request_checked_for_branch.clone())
-    };
-    let pull_request_checked_at = if should_refresh_pull_request {
-        repo.as_ref().map(|_| now)
-    } else {
-        existing.and_then(|metadata| metadata.pull_request_checked_at)
-    };
+
+    let (pull_request, pull_request_checked_for_branch, pull_request_checked_at) =
+        if want_pull_request {
+            let checked_for_branch = if snapshot.is_git_repo {
+                snapshot.git_branch.clone()
+            } else {
+                None
+            };
+            let checked_at = if snapshot.is_git_repo {
+                Some(Instant::now())
+            } else {
+                None
+            };
+            (snapshot.pull_request, checked_for_branch, checked_at)
+        } else {
+            (
+                previous.and_then(|m| m.pull_request.clone()),
+                previous.and_then(|m| m.pull_request_checked_for_branch.clone()),
+                previous.and_then(|m| m.pull_request_checked_at),
+            )
+        };
 
     WorkspaceMetadata {
-        git_branch,
-        git_dirty: repo
-            .as_ref()
-            .and_then(|repo| repo_has_changes(repo).ok())
-            .unwrap_or(false),
-        listening_ports: load_listening_ports(process_ids),
+        git_branch: snapshot.git_branch,
+        git_dirty: snapshot.git_dirty,
+        listening_ports: snapshot.listening_ports,
         pull_request,
         pull_request_checked_for_branch,
         pull_request_checked_at,
     }
 }
 
-fn repo_has_changes(repo: &Repository) -> anyhow::Result<bool> {
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .include_ignored(false)
-        .exclude_submodules(false);
-
-    Ok(!repo.statuses(Some(&mut opts))?.is_empty())
-}
-
-fn load_listening_ports(process_ids: &[u32]) -> Vec<u16> {
-    if process_ids.is_empty() {
-        return vec![];
-    }
-
-    let pid_list = process_ids
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let output = Command::new("lsof")
-        .args([
-            "-nP",
-            "-iTCP",
-            "-sTCP:LISTEN",
-            "-a",
-            "-p",
-            &pid_list,
-            "-F",
-            "n",
-        ])
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => {
-            parse_listening_ports(&String::from_utf8_lossy(&output.stdout))
-        }
-        Ok(_) | Err(_) => vec![],
-    }
-}
-
-fn parse_listening_ports(output: &str) -> Vec<u16> {
-    let mut ports = BTreeSet::new();
-
-    for line in output.lines() {
-        let Some(name) = line.strip_prefix('n') else {
-            continue;
-        };
-        let endpoint = name.split("->").next().unwrap_or(name).trim();
-        let endpoint = endpoint.split_whitespace().next().unwrap_or(endpoint);
-        let Some(port) = endpoint.rsplit(':').next() else {
-            continue;
-        };
-        if let Ok(port) = port.parse::<u16>() {
-            ports.insert(port);
-        }
-    }
-
-    ports.into_iter().collect()
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubPullRequestPayload {
-    number: u64,
-    state: GitHubPullRequestState,
-    #[serde(rename = "mergedAt")]
-    merged_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum GitHubPullRequestState {
-    Open,
-    Closed,
-    Merged,
-}
-
-fn load_pull_request(repo_root: &Path) -> Option<WorkspacePullRequest> {
-    let output = Command::new("gh")
-        .args(["pr", "view", "--json", "number,state,mergedAt"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    parse_pull_request(&String::from_utf8_lossy(&output.stdout))
-}
-
-fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
-    let payload: GitHubPullRequestPayload = serde_json::from_str(output).ok()?;
-    let status =
-        if payload.merged_at.is_some() || matches!(payload.state, GitHubPullRequestState::Merged) {
-            WorkspacePullRequestStatus::Merged
-        } else {
-            match payload.state {
-                GitHubPullRequestState::Open => WorkspacePullRequestStatus::Open,
-                GitHubPullRequestState::Closed => WorkspacePullRequestStatus::Closed,
-                GitHubPullRequestState::Merged => WorkspacePullRequestStatus::Merged,
-            }
-        };
-
-    Some(WorkspacePullRequest {
-        number: payload.number,
-        status,
-    })
-}
-
 #[cfg(test)]
 mod test {
-    use super::{
-        WorkspacePullRequest, WorkspacePullRequestStatus,
-        parse_listening_ports, parse_pull_request,
-    };
+    use super::*;
+    use mux::workspace_metadata::WorkspaceMetadataSnapshot;
 
-    #[test]
-    fn parses_listening_ports_from_lsof_output() {
-        let output = "\
-p123\n\
-n*:3000\n\
-n127.0.0.1:5173\n\
-n[::1]:8080\n\
-n*:3000\n";
-
-        assert_eq!(parse_listening_ports(output), vec![3000, 5173, 8080]);
+    fn snapshot(branch: &str, pr: Option<WorkspacePullRequest>) -> WorkspaceMetadataSnapshot {
+        WorkspaceMetadataSnapshot {
+            git_branch: Some(branch.to_string()),
+            git_dirty: false,
+            listening_ports: vec![3000],
+            pull_request: pr,
+            is_git_repo: true,
+        }
     }
 
     #[test]
-    fn parses_pull_request_payload() {
-        let payload = r#"{"number":704,"state":"OPEN","mergedAt":null}"#;
+    fn first_refresh_wants_pull_request() {
+        assert!(wants_pull_request_refresh(None));
+    }
 
+    #[test]
+    fn fresh_check_on_same_branch_skips_pull_request() {
+        let metadata = WorkspaceMetadata {
+            git_branch: Some("main".to_string()),
+            pull_request_checked_for_branch: Some("main".to_string()),
+            pull_request_checked_at: Some(Instant::now()),
+            ..Default::default()
+        };
+        assert!(!wants_pull_request_refresh(Some(&metadata)));
+    }
+
+    #[test]
+    fn branch_change_wants_pull_request() {
+        let metadata = WorkspaceMetadata {
+            git_branch: Some("feature".to_string()),
+            pull_request_checked_for_branch: Some("main".to_string()),
+            pull_request_checked_at: Some(Instant::now()),
+            ..Default::default()
+        };
+        assert!(wants_pull_request_refresh(Some(&metadata)));
+    }
+
+    #[test]
+    fn stale_check_wants_pull_request() {
+        let metadata = WorkspaceMetadata {
+            git_branch: Some("main".to_string()),
+            pull_request_checked_for_branch: Some("main".to_string()),
+            pull_request_checked_at: Some(
+                Instant::now() - SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL - Duration::from_secs(1),
+            ),
+            ..Default::default()
+        };
+        assert!(wants_pull_request_refresh(Some(&metadata)));
+    }
+
+    #[test]
+    fn skipped_pull_request_carries_previous_value() {
+        let pr = WorkspacePullRequest {
+            number: 704,
+            status: WorkspacePullRequestStatus::Open,
+        };
+        let checked_at = Instant::now();
+        let previous = WorkspaceMetadata {
+            git_branch: Some("main".to_string()),
+            pull_request: Some(pr.clone()),
+            pull_request_checked_for_branch: Some("main".to_string()),
+            pull_request_checked_at: Some(checked_at),
+            ..Default::default()
+        };
+
+        let merged = merge_workspace_metadata(Some(snapshot("main", None)), false, Some(&previous));
+
+        assert_eq!(merged.pull_request, Some(pr));
         assert_eq!(
-            parse_pull_request(payload),
-            Some(WorkspacePullRequest {
+            merged.pull_request_checked_for_branch,
+            Some("main".to_string())
+        );
+        assert_eq!(merged.pull_request_checked_at, Some(checked_at));
+        assert_eq!(merged.listening_ports, vec![3000]);
+    }
+
+    #[test]
+    fn requested_pull_request_replaces_previous_value() {
+        let previous = WorkspaceMetadata {
+            git_branch: Some("main".to_string()),
+            pull_request: Some(WorkspacePullRequest {
                 number: 704,
                 status: WorkspacePullRequestStatus::Open,
-            })
+            }),
+            pull_request_checked_for_branch: Some("main".to_string()),
+            pull_request_checked_at: Some(Instant::now()),
+            ..Default::default()
+        };
+
+        let merged = merge_workspace_metadata(Some(snapshot("feature", None)), true, Some(&previous));
+
+        assert_eq!(merged.pull_request, None);
+        assert_eq!(
+            merged.pull_request_checked_for_branch,
+            Some("feature".to_string())
         );
     }
 
+    #[test]
+    fn missing_snapshot_keeps_previous_metadata() {
+        let previous = WorkspaceMetadata {
+            git_branch: Some("main".to_string()),
+            git_dirty: true,
+            listening_ports: vec![8080],
+            ..Default::default()
+        };
+
+        let merged = merge_workspace_metadata(None, true, Some(&previous));
+        assert_eq!(merged, previous);
+    }
+
+    #[test]
+    fn non_repo_snapshot_does_not_record_a_pull_request_check() {
+        let non_repo = WorkspaceMetadataSnapshot {
+            git_branch: None,
+            git_dirty: false,
+            listening_ports: vec![],
+            pull_request: None,
+            is_git_repo: false,
+        };
+
+        let merged = merge_workspace_metadata(Some(non_repo), true, None);
+        assert_eq!(merged.pull_request_checked_at, None);
+        assert_eq!(merged.pull_request_checked_for_branch, None);
+    }
 }

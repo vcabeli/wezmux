@@ -3466,6 +3466,7 @@ dependencies = [
  "fancy-regex",
  "filedescriptor",
  "finl_unicode",
+ "git2",
  "hostname",
  "k9",
  "lazy_static",
