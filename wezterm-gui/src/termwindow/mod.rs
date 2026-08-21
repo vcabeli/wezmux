@@ -1240,6 +1240,9 @@ impl TermWindow {
                         | Alert::Progress(_),
                     ..
                 } => {
+                    // Agent-generated pane titles surface on sidebar cards,
+                    // so the entry cache must rebuild when a title changes.
+                    self.sidebar.invalidate_cache();
                     self.update_title();
                 }
                 MuxNotification::Alert {

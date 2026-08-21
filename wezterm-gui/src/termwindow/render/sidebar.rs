@@ -220,6 +220,46 @@ fn sidebar_agent_title_icon(
     }
 }
 
+/// Title text for a card whose active pane runs an agent.
+///
+/// Agents like Claude Code and Codex set the terminal title to a short
+/// generated task summary ("Figure 26b missing x axis"); prefer that over
+/// the static agent name. Falls back to the agent display name when the
+/// pane title is missing or generic (process name, workspace name, …).
+fn agent_card_title<'a>(
+    entry: &'a WorkspaceEntry,
+    agent: &'a crate::termwindow::sidebar::AgentInfo,
+) -> &'a str {
+    // Strip the leading status glyph agents embed in their titles
+    // (e.g. Claude Code's "✳ summary"); the sidebar renders its own
+    // animated icon in front of the title.
+    let title = entry
+        .title
+        .trim()
+        .trim_start_matches([
+            '\u{2733}', '\u{2731}', '\u{273B}', '\u{2736}', '\u{00B7}', '*',
+        ])
+        .trim_start();
+
+    let generic = title.is_empty()
+        || title == entry.name
+        || title.eq_ignore_ascii_case("wezterm")
+        || title.eq_ignore_ascii_case(&agent.display_name)
+        || entry
+            .foreground_process_name
+            .as_deref()
+            .is_some_and(|name| title.eq_ignore_ascii_case(name))
+        // Single-word titles are the process-name fallback from
+        // sidebar_title_from_pane ("claude", "node"), not generated
+        // summaries, which are always short phrases.
+        || !title.contains(' ');
+    if generic {
+        &agent.display_name
+    } else {
+        title
+    }
+}
+
 /// Returns a nerd font icon for common foreground processes.
 fn process_icon(process_name: &str) -> Option<&'static str> {
     let lower = process_name.to_lowercase();
@@ -445,7 +485,7 @@ fn build_card_element(
         format!(
             "{} {}",
             sidebar_agent_title_icon(agent, milliseconds),
-            agent.display_name
+            agent_card_title(entry, agent)
         )
     } else if let Some(icon) = entry
         .foreground_process_name
@@ -456,6 +496,11 @@ fn build_card_element(
     } else {
         entry.title.clone()
     };
+    // Agent-generated tab titles can be long; truncate before appending
+    // the emoji suffix so the emoji (and unread badge) stay visible.
+    let reserved_cols =
+        if entry.emoji.is_some() { 3 } else { 0 } + if entry.unread_count > 0 { 4 } else { 0 };
+    let base_title = truncate_to_cells(&base_title, text_cols.saturating_sub(reserved_cols));
     let title_text = match entry.emoji.as_deref() {
         Some(emoji) => format!("{} {}", base_title, emoji),
         None => base_title,
@@ -1001,8 +1046,8 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        SidebarLine, SidebarLineStyle, format_listening_ports, hex_to_linear,
-        sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear, wrap_text_to_cells,
+        agent_card_title, format_listening_ports, hex_to_linear, sidebar_entry_body_lines,
+        sidebar_pull_request_text, tint_linear, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
@@ -1181,6 +1226,67 @@ mod test {
             }),
             "\u{f419} PR #680 merged".to_string()
         );
+    }
+
+    fn agent_entry(title: &str, foreground: Option<&str>) -> WorkspaceEntry {
+        WorkspaceEntry {
+            name: "alpha".to_string(),
+            title: title.to_string(),
+            cwd: None,
+            cwd_path: None,
+            git_branch: None,
+            git_dirty: false,
+            listening_ports: vec![],
+            pull_request: None,
+            latest_notification: None,
+            unread_count: 0,
+            tab_count: 1,
+            pane_count: 1,
+            is_active: false,
+            is_hovered: false,
+            agent: Some(AgentInfo {
+                agent_type: AgentType::ClaudeCode,
+                display_name: "Claude Code".to_string(),
+                status: AgentStatus::Idle,
+                status_message: None,
+                subagent_count: 0,
+                background_tasks_count: 0,
+                session_crons_count: 0,
+            }),
+            foreground_process_name: foreground.map(|s| s.to_string()),
+            accent_color: None,
+            emoji: None,
+            display_name: None,
+        }
+    }
+
+    #[test]
+    fn agent_card_title_prefers_generated_tab_title() {
+        let entry = agent_entry("\u{2733} Figure 26b missing x axis", Some("node"));
+        let agent = entry.agent.as_ref().unwrap();
+        // Leading status glyph is stripped; the summary itself is kept.
+        assert_eq!(agent_card_title(&entry, agent), "Figure 26b missing x axis");
+    }
+
+    #[test]
+    fn agent_card_title_falls_back_when_generic() {
+        for (title, foreground) in [
+            ("", None),                        // no title at all
+            ("alpha", None),                   // workspace-name fallback
+            ("wezterm", None),                 // default pane title
+            ("Claude Code", None),             // agent name echoed back
+            ("claude", Some("claude")),        // foreground process name
+            ("node", Some("node")),            // process fallback title
+            ("\u{2733} claude", Some("node")), // glyph + single word
+        ] {
+            let entry = agent_entry(title, foreground);
+            let agent = entry.agent.as_ref().unwrap();
+            assert_eq!(
+                agent_card_title(&entry, agent),
+                "Claude Code",
+                "title {title:?} should fall back to the agent name"
+            );
+        }
     }
 
     #[test]
