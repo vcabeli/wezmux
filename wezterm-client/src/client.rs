@@ -542,6 +542,73 @@ struct Reconnectable {
     tls_creds: Option<GetTlsCredsResponse>,
 }
 
+/// Where wezmux looks for the remote CLI when no path is configured, in order.
+/// The first entry is where `bin/wezmux-install-remote` installs by default;
+/// the second covers a host that has it on PATH.
+const REMOTE_WEZMUX_CANDIDATES: &[&str] = &["$HOME/.local/lib/wezmux/bin/wezterm", "wezterm"];
+
+/// Resolve the wezmux CLI on the remote host, returning the path to run.
+///
+/// A configured path is used as-is if it exists. Otherwise the candidates are
+/// probed in order. Resolving up front keeps a missing install from surfacing
+/// as a protocol decode error from the dead proxy command.
+fn resolve_remote_wezmux(
+    sess: &wezterm_ssh::Session,
+    configured: Option<&str>,
+    remote_address: &str,
+) -> anyhow::Result<String> {
+    let candidates: Vec<&str> = match configured {
+        Some(path) => vec![path],
+        None => REMOTE_WEZMUX_CANDIDATES.to_vec(),
+    };
+
+    for candidate in &candidates {
+        match probe_remote_path(sess, candidate) {
+            Ok(Some(path)) => return Ok(path),
+            Ok(None) => {}
+            Err(err) => {
+                // Probing failed for an unrelated reason; let the connection
+                // itself report whatever is wrong.
+                log::warn!("could not probe for {candidate} on {remote_address}: {err:#}");
+                return Ok(candidate.to_string());
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "wezmux was not found on {remote_address}.\n\
+         \n\
+         Looked for: {}\n\
+         \n\
+         Install it there with:\n\
+         \n\
+         \x20   bin/wezmux-install-remote {remote_address}\n\
+         \n\
+         or set remote_wezterm_path for the host in your ssh_domains config.\n\
+         See docs/remote.md.",
+        candidates.join(", ")
+    )
+}
+
+/// The resolved path of `candidate` on the remote host, if it is executable.
+fn probe_remote_path(
+    sess: &wezterm_ssh::Session,
+    candidate: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut exec = smol::block_on(sess.exec(&format!("command -v {candidate}"), None))?;
+
+    let mut resolved = String::new();
+    exec.stdout.read_to_string(&mut resolved)?;
+    let status = exec.child.wait()?;
+
+    let resolved = resolved.trim();
+    if status.success() && !resolved.is_empty() {
+        Ok(Some(resolved.to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
 struct SshStream {
     stdin: FileDescriptor,
     stdout: FileDescriptor,
@@ -683,7 +750,15 @@ impl Reconnectable {
         let ssh_config = mux::ssh::ssh_domain_to_ssh_config(&ssh_dom)?;
 
         let sess = ssh_connect_with_ui(ssh_config, ui)?;
-        let proxy_bin = Self::wezterm_bin_path(&ssh_dom.remote_wezterm_path);
+        let proxy_bin = if ssh_dom.override_proxy_command.is_some() {
+            Self::wezterm_bin_path(&ssh_dom.remote_wezterm_path)
+        } else {
+            resolve_remote_wezmux(
+                &sess,
+                ssh_dom.remote_wezterm_path.as_deref(),
+                &ssh_dom.remote_address,
+            )?
+        };
 
         let cmd = if let Some(cmd) = ssh_dom.override_proxy_command.clone() {
             cmd
