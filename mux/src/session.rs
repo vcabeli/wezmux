@@ -164,18 +164,43 @@ fn save_pane_scrollback(pane: &Arc<dyn Pane>, seqid: usize) -> anyhow::Result<()
 }
 
 
+/// Whether every pane in `window` belongs to a local domain, and so can be
+/// respawned from a saved session. Panes hosted by another process cannot.
+fn window_is_restorable(mux: &Mux, window: &crate::window::Window) -> bool {
+    for tab in window.iter() {
+        for positioned in tab.iter_panes_ignoring_zoom() {
+            let Some(domain) = mux.get_domain(positioned.pane.domain_id()) else {
+                return false;
+            };
+            let is_local = (&*domain)
+                .downcast_ref::<crate::domain::LocalDomain>()
+                .is_some();
+            if !is_local {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub fn save_session(mux: &Mux) -> anyhow::Result<()> {
     let dir = session_dir();
     std::fs::create_dir_all(scrollback_dir())?;
 
     let mut seqid: usize = 0;
     let mut windows = Vec::new();
+    let mut skipped_remote = 0;
 
     for window_id in mux.iter_windows() {
         let window = match mux.get_window(window_id) {
             Some(w) => w,
             None => continue,
         };
+
+        if !window_is_restorable(mux, &window) {
+            skipped_remote += 1;
+            continue;
+        }
 
         let workspace = window.get_workspace().to_string();
         let title = window.get_title().to_string();
@@ -214,6 +239,18 @@ pub fn save_session(mux: &Mux) -> anyhow::Result<()> {
             active_tab_idx,
             tabs,
         });
+    }
+
+    if windows.is_empty() && skipped_remote > 0 {
+        // Nothing restorable to record; leave any existing session file be.
+        log::info!(
+            "Session not saved: all {skipped_remote} window(s) live in a remote domain; \
+             keeping the previously saved local session"
+        );
+        return Ok(());
+    }
+    if skipped_remote > 0 {
+        log::info!("Session save skipped {skipped_remote} window(s) in remote domains");
     }
 
     // Sidebar cache
