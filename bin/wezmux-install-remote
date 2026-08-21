@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+# Install wezmux on a remote host, so that `wezmux --ssh HOST` can run your
+# whole session there.
+#
+#   bin/wezmux-install-remote [OPTIONS] [USER@]HOST
+#
+# What lands on the host, all in one directory, which is where the mux server
+# and the wrapper look for each other:
+#
+#   PREFIX/bin/wezterm             CLI that starts and proxies to the mux server
+#   PREFIX/bin/wezterm-mux-server  the mux server that owns the remote panes
+#   PREFIX/bin/claude              wrapper that injects the agent status hooks
+#   PREFIX/bin/hooks/              the hook scripts
+#
+# Copies the local checkout and builds it there: the mux protocol version is
+# checked on connect, so both ends must be the same wezmux.
+
+set -euo pipefail
+
+readonly BUILD_PACKAGES='wezterm wezterm-mux-server strip-ansi-escapes'
+readonly NEED_TARGET_MB=3000
+readonly NEED_SRC_MB=400
+readonly NEED_PREFIX_MB=200
+
+usage() {
+  cat >&2 <<'EOF'
+usage: wezmux-install-remote [OPTIONS] [USER@]HOST
+
+Paths on the remote host:
+  --data-dir DIR    put everything (sources, build output, toolchain and the
+                    install itself) under DIR. Use this when the home
+                    filesystem is too small: the build needs a few GB
+  --prefix DIR      install location        (default ~/.local/lib/wezmux)
+  --src DIR         where to copy sources   (default ~/.cache/wezmux/src)
+  --target-dir DIR  cargo target directory  (default SRC/target)
+  --cargo-home DIR  CARGO_HOME              (default: the host's own)
+  --rustup-home DIR RUSTUP_HOME             (default: the host's own)
+
+Setup:
+  --install-deps    install missing OS packages (uses sudo on the host)
+  --install-rust    install a Rust toolchain with rustup (no sudo needed)
+
+Other:
+  --no-build        copy the sources and stop
+  --no-link         don't symlink the binaries into ~/.local/bin
+  --jobs N          passed to cargo as --jobs N
+  -h, --help        show this help
+
+The host needs cargo, cmake, pkg-config, a C/C++ compiler and the OpenSSL
+headers. It does not need the GUI dependencies from ./get-deps: only the mux
+server and the CLI are built there.
+
+Examples:
+  bin/wezmux-install-remote --install-deps --install-rust build-box
+  bin/wezmux-install-remote --data-dir /scratch/wezmux build-box
+EOF
+  exit 2
+}
+
+# --- arguments --------------------------------------------------------------
+
+PREFIX='$HOME/.local/lib/wezmux'
+SRC='$HOME/.cache/wezmux/src'
+TARGET_DIR=""
+CARGO_HOME_DIR=""
+RUSTUP_HOME_DIR=""
+INSTALL_DEPS=0
+INSTALL_RUST=0
+DO_BUILD=1
+DO_LINK=1
+JOBS=""
+HOST=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --data-dir)
+      PREFIX="$2"; SRC="$2/src"; TARGET_DIR="$2/target"
+      CARGO_HOME_DIR="$2/cargo"; RUSTUP_HOME_DIR="$2/rustup"; shift 2 ;;
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --src) SRC="$2"; shift 2 ;;
+    --target-dir) TARGET_DIR="$2"; shift 2 ;;
+    --cargo-home) CARGO_HOME_DIR="$2"; shift 2 ;;
+    --rustup-home) RUSTUP_HOME_DIR="$2"; shift 2 ;;
+    --install-deps) INSTALL_DEPS=1; shift ;;
+    --install-rust) INSTALL_RUST=1; shift ;;
+    --no-build) DO_BUILD=0; shift ;;
+    --no-link) DO_LINK=0; shift ;;
+    --jobs) JOBS="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    -*) echo "unknown option: $1" >&2; usage ;;
+    *)
+      [ -z "$HOST" ] || { echo "unexpected argument: $1" >&2; usage; }
+      HOST="$1"; shift ;;
+  esac
+done
+[ -n "$HOST" ] || usage
+
+die() { echo "wezmux-install-remote: $*" >&2; exit 1; }
+
+# Repo root: the parent of the bin/ directory holding this script.
+script="$0"
+while [ -L "$script" ]; do
+  target="$(readlink "$script")"
+  case "$target" in
+    /*) script="$target" ;;
+    *) script="$(dirname "$script")/$target" ;;
+  esac
+done
+REPO="$(cd -P "$(dirname "$script")/.." && pwd)"
+[ -f "$REPO/Cargo.toml" ] && [ -f "$REPO/bin/claude" ] ||
+  die "$REPO does not look like a wezmux checkout"
+command -v rsync >/dev/null 2>&1 || die "rsync is required locally"
+
+# One ssh connection for every step, with keepalives for the long build.
+SSH_CTL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wezmux-install.XXXXXX")"
+SSH_CTL="$SSH_CTL_DIR/ctl"
+SSH_OPTS=(
+  -o "ControlMaster=auto"
+  -o "ControlPath=$SSH_CTL"
+  -o "ControlPersist=120"
+  -o "ServerAliveInterval=30"
+  -o "ServerAliveCountMax=6"
+)
+cleanup() {
+  ssh -O exit -o "ControlPath=$SSH_CTL" "$HOST" >/dev/null 2>&1 || true
+  rm -rf "$SSH_CTL_DIR"
+}
+trap cleanup EXIT
+
+# rustup puts cargo on PATH via the shell profile, which a non-interactive ssh
+# command does not read.
+REMOTE_ENV=""
+[ -n "$CARGO_HOME_DIR" ] && REMOTE_ENV="export CARGO_HOME='$CARGO_HOME_DIR';"
+[ -n "$RUSTUP_HOME_DIR" ] && REMOTE_ENV="$REMOTE_ENV export RUSTUP_HOME='$RUSTUP_HOME_DIR';"
+[ -n "$TARGET_DIR" ] && REMOTE_ENV="$REMOTE_ENV export CARGO_TARGET_DIR='$TARGET_DIR';"
+REMOTE_ENV="$REMOTE_ENV
+for f in \"\${CARGO_HOME:-\$HOME/.cargo}/env\" \"\$HOME/.cargo/env\"; do
+  [ -f \"\$f\" ] && . \"\$f\" && break
+done
+true"
+
+remote() { ssh "${SSH_OPTS[@]}" "$HOST" "$REMOTE_ENV
+$1"; }
+
+# --- host preflight ---------------------------------------------------------
+
+echo "==> Checking $HOST"
+remote 'command -v rsync >/dev/null 2>&1' || die "rsync is required on $HOST"
+
+# Only what the CLI and mux server need; not the GUI dependency set.
+IFS='|' read -r PKG_MGR PKG_INSTALL PKG_LIST <<<"$(remote '
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get|apt-get install -y|cmake pkg-config build-essential libssl-dev"
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "dnf|dnf install -y|cmake pkgconf-pkg-config gcc gcc-c++ openssl-devel"
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "pacman|pacman -S --needed --noconfirm|cmake pkgconf base-devel openssl"
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "zypper|zypper install -y|cmake pkg-config gcc gcc-c++ libopenssl-devel"
+  else
+    echo "||"
+  fi')"
+
+missing_tools() {
+  remote 'for t in cmake pkg-config cc; do
+    command -v $t >/dev/null 2>&1 || printf "%s " $t
+  done'
+}
+
+install_deps() {
+  [ -n "$PKG_MGR" ] || die "no supported package manager on $HOST; install cmake, pkg-config, a C/C++ compiler and the OpenSSL headers yourself"
+  echo "==> Installing OS packages with $PKG_MGR: $PKG_LIST"
+  if remote 'test "$(id -u)" = 0'; then
+    remote "$PKG_INSTALL $PKG_LIST"
+  elif remote 'sudo -n true 2>/dev/null'; then
+    echo "    (passwordless sudo)"
+    remote "sudo $PKG_INSTALL $PKG_LIST"
+  elif [ -t 0 ]; then
+    echo "    sudo on $HOST needs a password; you will be prompted"
+    ssh -t "${SSH_OPTS[@]}" "$HOST" "sudo $PKG_INSTALL $PKG_LIST"
+  else
+    die "sudo on $HOST needs a password and this is not an interactive terminal. Run:
+    ssh -t $HOST 'sudo $PKG_INSTALL $PKG_LIST'"
+  fi
+}
+
+MISSING="$(missing_tools)"
+if [ -n "$MISSING" ]; then
+  if [ "$INSTALL_DEPS" = 1 ]; then
+    install_deps
+    MISSING="$(missing_tools)"
+    [ -z "$MISSING" ] || die "still missing after install: $MISSING"
+  else
+    die "$HOST is missing: $MISSING
+Re-run with --install-deps to install them (uses sudo on the host), or:
+    ssh $HOST '${PKG_MGR:+sudo }${PKG_INSTALL:-<package manager>} ${PKG_LIST:-cmake pkg-config compiler openssl-headers}'"
+  fi
+fi
+
+if [ "$DO_BUILD" = 1 ] && ! remote 'command -v cargo >/dev/null 2>&1'; then
+  if [ "$INSTALL_RUST" = 1 ]; then
+    echo "==> Installing a Rust toolchain on $HOST"
+    remote 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs |
+      sh -s -- -y --no-modify-path --profile minimal >/dev/null'
+    # rust-toolchain.toml asks for these, and a minimal profile lacks them.
+    remote 'rustup component add clippy rustfmt >/dev/null'
+    remote 'command -v cargo >/dev/null 2>&1' || die "cargo still not found after installing rustup"
+  else
+    die "no cargo on $HOST.
+Re-run with --install-rust to install a toolchain there (no sudo needed), or
+install one yourself:
+    ssh $HOST 'curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+Use --cargo-home/--rustup-home (or --data-dir) to keep it off a small home
+filesystem. Or pass --no-build to copy the sources only."
+  fi
+fi
+
+# --- space preflight --------------------------------------------------------
+
+# Free megabytes on the filesystem that will hold DIR, which need not exist.
+free_mb() {
+  remote "d='$1'
+    while [ ! -d \"\$d\" ] && [ \"\$d\" != / ]; do d=\$(dirname \"\$d\"); done
+    df -Pk \"\$d\" | awk 'NR==2 {print int(\$4/1024)}'"
+}
+
+check_space() {
+  local dir="$1" need="$2" label="$3" avail
+  avail="$(free_mb "$dir")" || return 0
+  [ -n "$avail" ] || return 0
+  if [ "$avail" -lt "$need" ]; then
+    die "not enough space for the $label on $HOST.
+    $dir has ${avail}MB free, needs about ${need}MB.
+Point it at a bigger filesystem, e.g.
+    $0 --data-dir /bigger/filesystem/wezmux $HOST"
+  fi
+}
+
+EFFECTIVE_TARGET="${TARGET_DIR:-$SRC/target}"
+check_space "$SRC" "$NEED_SRC_MB" "sources"
+check_space "$PREFIX" "$NEED_PREFIX_MB" "install"
+[ "$DO_BUILD" = 1 ] && check_space "$EFFECTIVE_TARGET" "$NEED_TARGET_MB" "build output"
+
+# --- copy, build, install ---------------------------------------------------
+
+echo "==> Copying sources to $HOST:$SRC (a few hundred MB the first time)"
+remote "mkdir -p \"$SRC\""
+REMOTE_SRC="$(remote "cd \"$SRC\" && pwd")"
+# Not routed through the shared connection: openrsync (macOS) mishandles a
+# multi-option -e. /docs is excluded; nothing in the build reads it.
+rsync -az --delete \
+  --exclude '/target' --exclude '/.git' --exclude '/docs' \
+  "$REPO/" "$HOST:$REMOTE_SRC/"
+
+# The version is derived from git at build time and .git is not copied, so pass
+# the string this checkout would report. .tag only becomes a build-script input
+# once it exists, hence the touch.
+VERSION_TAG="$(git -C "$REPO" -c core.abbrev=8 show -s \
+  --format=%cd-%h --date=format:%Y%m%d-%H%M%S 2>/dev/null || true)"
+if [ -n "$VERSION_TAG" ]; then
+  remote "printf '%s\n' '$VERSION_TAG' > \"$REMOTE_SRC/.tag\" &&
+    touch \"$REMOTE_SRC/wezterm-version/build.rs\""
+  echo "==> Remote build will report version $VERSION_TAG"
+fi
+
+if [ "$DO_BUILD" = 0 ]; then
+  echo "==> Skipping build (--no-build). Sources are at $HOST:$REMOTE_SRC"
+  exit 0
+fi
+
+echo "==> Building on $HOST (several minutes the first time)"
+# shellcheck disable=SC2086  # BUILD_PACKAGES and JOBS are deliberately split
+remote "cd \"$REMOTE_SRC\" && cargo build --release ${JOBS:+--jobs $JOBS} \
+  $(for p in $BUILD_PACKAGES; do printf -- '-p %s ' "$p"; done)"
+
+echo "==> Installing into $HOST:$PREFIX/bin"
+BUILT_DIR="${TARGET_DIR:+$TARGET_DIR/release}"
+BUILT_DIR="${BUILT_DIR:-$REMOTE_SRC/target/release}"
+LINK_CMD=""
+if [ "$DO_LINK" = 1 ]; then
+  LINK_CMD='mkdir -p "$HOME/.local/bin"
+    ln -sf "$prefix/bin/wezterm" "$HOME/.local/bin/wezterm"
+    ln -sf "$prefix/bin/wezterm-mux-server" "$HOME/.local/bin/wezterm-mux-server"'
+fi
+
+remote "
+  set -eu
+  prefix=\"$PREFIX\"
+  built=\"$BUILT_DIR\"
+  mkdir -p \"\$prefix/bin\"
+  # Rename rather than copy over: overwriting a running binary is ETXTBSY.
+  for b in $BUILD_PACKAGES; do
+    cp \"\$built/\$b\" \"\$prefix/bin/\$b.new\"
+    chmod +x \"\$prefix/bin/\$b.new\"
+    mv -f \"\$prefix/bin/\$b.new\" \"\$prefix/bin/\$b\"
+  done
+  cp \"$REMOTE_SRC/bin/claude\" \"\$prefix/bin/claude\"
+  rm -rf \"\$prefix/bin/hooks\"
+  cp -R \"$REMOTE_SRC/bin/hooks\" \"\$prefix/bin/hooks\"
+  chmod +x \"\$prefix/bin/claude\" \"\$prefix/bin/hooks\"/*.sh
+  [ -d \"\$prefix/bin/hooks/codex\" ] && chmod +x \"\$prefix/bin/hooks/codex\"/*.sh
+  $LINK_CMD
+  \"\$prefix/bin/wezterm\" --version
+"
+
+REMOTE_WEZTERM="$(remote "echo \"$PREFIX/bin/wezterm\"")"
+
+# An already running server keeps executing the old binary. The bracket stops
+# the pattern from matching the shell running the check.
+if remote "pgrep -f '[w]ezterm-mux-server' >/dev/null 2>&1"; then
+  cat <<EOF
+
+==> NOTE: a wezterm-mux-server is already running on $HOST.
+
+It keeps serving the previous build, so a client using the new protocol may be
+refused. Restart it when you are ready to lose the panes it hosts:
+
+  ssh $HOST "pkill -f '[w]ezterm-mux-server'"
+EOF
+fi
+
+cat <<EOF
+
+==> Done. Start a session with:
+
+  wezmux --ssh $HOST --remote-wezmux-path $REMOTE_WEZTERM
+
+To drop the path from that command line, add the host to your wezmux config
+(~/.wezmux.lua) once:
+
+  config.ssh_domains = {
+    {
+      name = 'SSHMUX:$HOST',
+      remote_address = '$HOST',
+      multiplexing = 'WezTerm',
+      remote_wezterm_path = '$REMOTE_WEZTERM',
+    },
+  }
+
+then just:  wezmux --ssh $HOST
+Check what is configured with: wezmux --list-remotes
+
+Re-run this script after updating your local checkout: the client and server
+must be the same wezmux version. See docs/remote.md.
+EOF

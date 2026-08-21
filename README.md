@@ -36,6 +36,8 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 \e]7777;status;working;Running tests\a
 ```
 
+**Remote workspaces** — a workspace can run on another machine. Pick where it runs when you create it; workspaces on a remote host keep running when you disconnect, and the sidebar reports that host's git branch, PR status, ports and agent status. See [docs/remote.md](docs/remote.md).
+
 **Session save/restore** on quit and relaunch:
 - Workspace layout and split pane structure preserved
 - Per-pane CWDs restored

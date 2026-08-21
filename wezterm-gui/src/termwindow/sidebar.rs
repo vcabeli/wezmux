@@ -1,4 +1,6 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
+use crate::remote::{PickerContext, RemoteSessions, WorkspaceTarget};
+use mux::domain::DomainState;
 use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
 use promise::spawn::spawn;
@@ -707,7 +709,85 @@ impl crate::TermWindow {
         }
     }
 
+    /// Open the picker that chooses where a new workspace runs. With no remote
+    /// host known, there is nothing to choose, so spawn locally right away.
     pub fn show_new_workspace_prompt(&mut self) {
+        let config = config::configuration();
+        let sessions = RemoteSessions::load();
+        let ctx = self.workspace_picker_context(&config, &sessions);
+        let entries = crate::remote::build_picker_entries(&sessions, &ctx);
+
+        if entries.len() <= 1 {
+            self.spawn_local_workspace();
+            return;
+        }
+
+        let mux = Mux::get();
+        let Some(tab) = mux.get_active_tab_for_window(self.mux_window_id) else {
+            return;
+        };
+        let gui_win = GuiWin::new(self);
+
+        let (overlay, future) = crate::overlay::start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::workspace_picker::show_workspace_picker_overlay(term, entries, gui_win)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
+    /// Gather what the picker needs from the mux and the config.
+    fn workspace_picker_context(
+        &self,
+        config: &ConfigHandle,
+        sessions: &RemoteSessions,
+    ) -> PickerContext {
+        let mux = Mux::get();
+        let attached_hosts = sessions
+            .hosts()
+            .into_iter()
+            .filter(|host| {
+                crate::remote::domain_config_for_host(config, host)
+                    .ok()
+                    .and_then(|dom| mux.get_domain_by_name(&dom.name))
+                    .map(|dom| dom.state() == DomainState::Attached)
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        PickerContext {
+            live_workspaces: mux.iter_workspaces(),
+            attached_hosts,
+            configured_hosts: crate::remote::explicitly_configured_hosts(config),
+        }
+    }
+
+    /// Prompt for a host that isn't in the picker yet.
+    pub fn show_remote_host_prompt(&mut self) {
+        let mux = Mux::get();
+        let Some(tab) = mux.get_active_tab_for_window(self.mux_window_id) else {
+            return;
+        };
+        let gui_win = GuiWin::new(self);
+
+        let (overlay, future) = crate::overlay::start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::prompt::show_remote_host_prompt_overlay(term, gui_win)
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
+    pub fn spawn_workspace_target(&mut self, target: WorkspaceTarget) {
+        match target {
+            WorkspaceTarget::Local => self.spawn_local_workspace(),
+            WorkspaceTarget::NewRemote { host } => self.spawn_remote_workspace(host, None),
+            WorkspaceTarget::Remote { host, workspace } => {
+                self.spawn_remote_workspace(host, Some(workspace))
+            }
+            WorkspaceTarget::PromptForHost => self.show_remote_host_prompt(),
+        }
+    }
+
+    fn spawn_local_workspace(&mut self) {
         let name = Mux::get().generate_workspace_name();
         // Clear any stale config from a previous workspace with the same recycled name
         self.sidebar.workspace_configs.remove_workspace(&name);
@@ -719,6 +799,53 @@ impl crate::TermWindow {
             log::error!("Failed to save workspace configs: {:#}", e);
         }
         self.spawn_named_workspace(name);
+    }
+
+    /// Attach `host`'s mux server if needed, then open `workspace` there, or a
+    /// new one when it is `None`.
+    fn spawn_remote_workspace(&mut self, host: String, workspace: Option<String>) {
+        let activity = crate::Activity::new();
+        let size = self.terminal_size;
+
+        promise::spawn::spawn(async move {
+            let config = config::configuration();
+            let domain = match crate::remote::domain_for_host(&config, &host) {
+                Ok(domain) => domain,
+                Err(err) => {
+                    log::error!("cannot use remote host {host}: {err:#}");
+                    return;
+                }
+            };
+
+            if domain.state() == DomainState::Detached {
+                if let Err(err) = domain.attach(None).await {
+                    log::error!("cannot attach to {host}: {err:#}");
+                    return;
+                }
+            }
+
+            let mux = Mux::get();
+            let workspace = workspace.unwrap_or_else(|| mux.generate_workspace_name());
+            let switcher = WorkspaceSwitcher::new(&workspace);
+            mux.set_active_workspace(&workspace);
+
+            if mux.iter_windows_in_workspace(&workspace).is_empty() {
+                let window_id = *mux.new_empty_window(Some(workspace.clone()), None);
+                if let Err(err) = domain.spawn(size, None, None, window_id).await {
+                    log::error!("cannot open a workspace on {host}: {err:#}");
+                }
+            }
+            switcher.do_switch();
+
+            let mut sessions = RemoteSessions::load();
+            sessions.record(&host, &workspace, chrono::Utc::now().to_rfc3339());
+            if let Err(err) = sessions.save() {
+                log::warn!("could not record the remote session: {err:#}");
+            }
+
+            drop(activity);
+        })
+        .detach();
     }
 
     pub fn spawn_named_workspace(&mut self, name: String) {

@@ -149,6 +149,41 @@ pub fn show_new_workspace_prompt_overlay(
     Ok(())
 }
 
+/// Ask for a host to open a remote workspace on, as `[user@]host[:port]`.
+pub fn show_remote_host_prompt_overlay(
+    mut term: TermWizTerminal,
+    window: GuiWin,
+) -> anyhow::Result<()> {
+    term.no_grab_mouse_in_raw_mode();
+    term.render(&[Change::Text(
+        "Open a workspace on a remote host.\r\n         The host needs wezmux installed; see docs/remote.md.\r\n         Leave blank to cancel.\r\n"
+            .to_string(),
+    )])?;
+
+    let mut host_prompt = PromptHost::new();
+    let mut editor = LineEditor::new(&mut term);
+    editor.set_prompt("host> ");
+    let line = editor.read_line(&mut host_prompt)?;
+
+    promise::spawn::spawn_into_main_thread(async move {
+        if let Some(host) = line
+            .map(|host| host.trim().to_string())
+            .filter(|host| !host.is_empty())
+        {
+            window
+                .window
+                .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
+                    term_window
+                        .spawn_workspace_target(crate::remote::WorkspaceTarget::NewRemote { host });
+                })));
+        }
+        anyhow::Result::<()>::Ok(())
+    })
+    .detach();
+
+    Ok(())
+}
+
 fn trampoline(name: String, window: GuiWin, pane: MuxPane, line: Option<String>) {
     promise::spawn::spawn(async move {
         config::with_lua_config_on_main_thread(move |lua| do_event(lua, name, window, pane, line))
