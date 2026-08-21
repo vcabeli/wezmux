@@ -441,7 +441,7 @@ macro_rules! pdu {
 /// The overall version of the codec.
 /// This must be bumped when backwards incompatible changes
 /// are made to the types and protocol.
-pub const CODEC_VERSION: usize = 45;
+pub const CODEC_VERSION: usize = 46;
 
 // Defines the Pdu enum.
 // Each struct has an explicit identifying number.
@@ -502,6 +502,8 @@ pdu! {
     GetPaneDirection: 60,
     GetPaneDirectionResponse: 61,
     AdjustPaneSize: 62,
+    GetWorkspaceMetadata: 63,
+    GetWorkspaceMetadataResponse: 64,
 }
 
 impl Pdu {
@@ -876,6 +878,21 @@ pub struct AdjustPaneSize {
     pub amount: usize,
 }
 
+/// Ask the server for the sidebar metadata of a workspace it hosts.
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct GetWorkspaceMetadata {
+    pub workspace: String,
+    /// Whether to include the pull request state, which costs a `gh` call.
+    pub want_pull_request: bool,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct GetWorkspaceMetadataResponse {
+    pub workspace: String,
+    /// `None` if the server could not resolve a working directory for it.
+    pub metadata: Option<mux::workspace_metadata::WorkspaceMetadataSnapshot>,
+}
+
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct GetPaneDirectionResponse {
     pub pane_id: Option<PaneId>,
@@ -1185,6 +1202,50 @@ mod test {
             },
             Pdu::decode(encoded.as_slice()).unwrap()
         );
+    }
+
+    #[test]
+    fn round_trip_workspace_metadata() {
+        use mux::workspace_metadata::{
+            PullRequestInfo, PullRequestStatus, WorkspaceMetadataSnapshot,
+        };
+
+        let request = Pdu::GetWorkspaceMetadata(GetWorkspaceMetadata {
+            workspace: "api".to_string(),
+            want_pull_request: true,
+        });
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded, 7).unwrap();
+        let decoded = Pdu::decode(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.serial, 7);
+        assert_eq!(decoded.pdu, request);
+
+        let response = Pdu::GetWorkspaceMetadataResponse(GetWorkspaceMetadataResponse {
+            workspace: "api".to_string(),
+            metadata: Some(WorkspaceMetadataSnapshot {
+                git_branch: Some("main".to_string()),
+                git_dirty: true,
+                listening_ports: vec![3000, 8080],
+                pull_request: Some(PullRequestInfo {
+                    number: 704,
+                    status: PullRequestStatus::Merged,
+                }),
+                is_git_repo: true,
+            }),
+        });
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded, 8).unwrap();
+        let decoded = Pdu::decode(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.serial, 8);
+        assert_eq!(decoded.pdu, response);
+
+        let empty = Pdu::GetWorkspaceMetadataResponse(GetWorkspaceMetadataResponse {
+            workspace: "scratch".to_string(),
+            metadata: None,
+        });
+        let mut encoded = Vec::new();
+        empty.encode(&mut encoded, 9).unwrap();
+        assert_eq!(Pdu::decode(encoded.as_slice()).unwrap().pdu, empty);
     }
 
     #[test]

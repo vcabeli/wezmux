@@ -15,7 +15,10 @@ use portable_pty::CommandBuilder;
 use promise::spawn::spawn_into_new_thread;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use wezterm_term::TerminalSize;
+
+const WORKSPACE_METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct ClientInner {
     pub client: Client,
@@ -758,6 +761,35 @@ impl Domain for ClientDomain {
         _command_dir: Option<String>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         anyhow::bail!("spawn_pane not implemented for ClientDomain")
+    }
+
+    /// Ask the server, which owns the panes this metadata describes.
+    async fn workspace_metadata(
+        &self,
+        workspace: &str,
+        want_pull_request: bool,
+    ) -> Option<mux::workspace_metadata::WorkspaceMetadataSnapshot> {
+        let inner = self.inner()?;
+        let fetch = inner
+            .client
+            .get_workspace_metadata(codec::GetWorkspaceMetadata {
+                workspace: workspace.to_string(),
+                want_pull_request,
+            });
+
+        // Bounded: the caller suppresses further refreshes until we return.
+        let timeout = async {
+            smol::Timer::after(WORKSPACE_METADATA_TIMEOUT).await;
+            Err(anyhow!("timed out after {WORKSPACE_METADATA_TIMEOUT:?}"))
+        };
+
+        match smol::future::or(fetch, timeout).await {
+            Ok(response) => response.metadata,
+            Err(err) => {
+                log::debug!("failed to fetch workspace metadata for {workspace}: {err:#}");
+                None
+            }
+        }
     }
 
     /// Forward the request to the remote; we need to translate the local ids

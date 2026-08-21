@@ -987,8 +987,41 @@ impl SessionHandler {
                 .detach();
             }
 
+            Pdu::GetWorkspaceMetadata(GetWorkspaceMetadata {
+                workspace,
+                want_pull_request,
+            }) => {
+                spawn_into_main_thread(async move {
+                    // Resolve on the mux thread, gather off it: the gathering
+                    // runs git status, `gh pr view` and `lsof`.
+                    let request = mux::workspace_metadata::request_for_workspace(
+                        &workspace,
+                        want_pull_request,
+                    );
+                    promise::spawn::spawn(async move {
+                        let metadata = match request {
+                            Some(request) => promise::spawn::spawn_into_new_thread(move || {
+                                Ok(mux::workspace_metadata::gather(&request))
+                            })
+                            .await
+                            .ok(),
+                            None => None,
+                        };
+                        send_response(Ok(Pdu::GetWorkspaceMetadataResponse(
+                            GetWorkspaceMetadataResponse {
+                                workspace,
+                                metadata,
+                            },
+                        )));
+                    })
+                    .detach();
+                })
+                .detach();
+            }
+
             Pdu::Invalid { .. } => send_response(Err(anyhow!("invalid PDU {:?}", decoded.pdu))),
-            Pdu::Pong { .. }
+            Pdu::GetWorkspaceMetadataResponse { .. }
+            | Pdu::Pong { .. }
             | Pdu::ListPanesResponse { .. }
             | Pdu::SetClipboard { .. }
             | Pdu::NotifyAlert { .. }
