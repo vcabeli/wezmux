@@ -621,14 +621,16 @@ impl ClientDomain {
                     }
                 });
 
-                if let Some(local_window_id) = inner.remote_to_local_window(remote_window_id) {
-                    let mut window = mux
-                        .get_window_mut(local_window_id)
-                        .expect("no such window!?");
+                // A mapping can outlive its local window: closing a window
+                // leaves the remote one running. Ignore the stale entry; the
+                // paths below record a fresh mapping.
+                if let Some(mut window) = inner
+                    .remote_to_local_window(remote_window_id)
+                    .and_then(|local_window_id| mux.get_window_mut(local_window_id))
+                {
                     log::debug!(
-                        "domain: {} adding tab to existing local window {}",
+                        "domain: {} adding tab to existing local window",
                         inner.local_domain_id,
-                        local_window_id
                     );
                     if window.idx_by_id(tab.tab_id()).is_none() {
                         window.push(&tab);
@@ -636,14 +638,21 @@ impl ClientDomain {
                     continue;
                 }
 
+                // A spawn that is still in flight may already have placed
+                // this tab in a window; the sync must not add it twice.
+                if let Some(local_window_id) = mux.window_containing_tab(tab.tab_id()) {
+                    inner.record_remote_to_local_window_mapping(remote_window_id, local_window_id);
+                    continue;
+                }
+
                 if let Some(local_window_id) = primary_window_id {
                     // Verify that the workspace is consistent between the local and remote
                     // windows
-                    if Some(
-                        mux.get_window(local_window_id)
-                            .expect("primary window to be valid")
-                            .get_workspace(),
-                    ) == workspace.as_deref()
+                    if mux
+                        .get_window(local_window_id)
+                        .map(|window| window.get_workspace().to_string())
+                        .as_deref()
+                        == workspace.as_deref()
                     {
                         // Yes! We can use this window
                         log::debug!(
@@ -673,10 +682,10 @@ impl ClientDomain {
         }
 
         for (remote_window_id, window_title) in panes.window_titles {
-            if let Some(local_window_id) = inner.remote_to_local_window(remote_window_id) {
-                let mut window = mux
-                    .get_window_mut(local_window_id)
-                    .expect("no such window!?");
+            if let Some(mut window) = inner
+                .remote_to_local_window(remote_window_id)
+                .and_then(|local_window_id| mux.get_window_mut(local_window_id))
+            {
                 window.set_title(&window_title);
             }
         }
