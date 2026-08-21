@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Wezmux launcher.
+#
+# Runs the wezterm-gui binary that sits alongside this script. Symlink it onto
+# your PATH, e.g.
+#
+#   ln -s /Applications/Wezmux.app/Contents/Resources/bin/wezmux ~/.local/bin/wezmux
+#
+# wezterm-gui rather than the `wezterm` front end, which can hand off to an
+# already running instance.
+
+set -euo pipefail
+
+# Physical directory containing this script, following symlinks.
+script="$0"
+while [ -L "$script" ]; do
+  target="$(readlink "$script")"
+  case "$target" in
+    /*) script="$target" ;;
+    *) script="$(dirname "$script")/$target" ;;
+  esac
+done
+bin_dir="$(cd -P "$(dirname "$script")" && pwd)"
+
+candidates=(
+  # .app bundle: Contents/Resources/bin -> Contents/MacOS
+  "$bin_dir/../../MacOS/wezterm-gui"
+  # repo checkout: <repo>/bin -> <repo>/target/{release,debug}
+  "$bin_dir/../target/release/wezterm-gui"
+  "$bin_dir/../target/debug/wezterm-gui"
+  # bin/ alongside the binaries
+  "$bin_dir/wezterm-gui"
+)
+
+for candidate in "${candidates[@]}"; do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+if command -v wezterm-gui >/dev/null 2>&1; then
+  exec wezterm-gui "$@"
+fi
+
+echo "wezmux: could not find the wezterm-gui binary." >&2
+echo "Looked next to $bin_dir and on PATH." >&2
+echo "Build it with 'make install' (or 'cargo build -p wezterm-gui')." >&2
+exit 1

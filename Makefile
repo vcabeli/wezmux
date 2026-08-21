@@ -1,6 +1,6 @@
 APP_DIR ?= /Applications/Wezmux.app
 
-.PHONY: all fmt build check test install install-codex-hooks bundle
+.PHONY: all fmt build check test install install-codex-hooks install-remote bundle
 
 all: build
 
@@ -46,14 +46,23 @@ install:
 	rm /tmp/wezterm-gui
 	cp -R bin $(APP_DIR)/Contents/Resources/bin
 	ln -s ../Resources/bin $(APP_DIR)/Contents/MacOS/bin
-	chmod +x $(APP_DIR)/Contents/Resources/bin/claude $(APP_DIR)/Contents/Resources/bin/hooks/*.sh $(APP_DIR)/Contents/Resources/bin/hooks/codex/*.sh $(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
+	chmod +x $(APP_DIR)/Contents/Resources/bin/claude $(APP_DIR)/Contents/Resources/bin/wezmux $(APP_DIR)/Contents/Resources/bin/wezmux-install-remote $(APP_DIR)/Contents/Resources/bin/hooks/*.sh $(APP_DIR)/Contents/Resources/bin/hooks/codex/*.sh $(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
 	xattr -cr $(APP_DIR)
 	@echo "Wezmux.app installed to $(APP_DIR)"
 	@echo ""
+	@echo "Optional: put the wezmux launcher on your PATH:"
+	@echo "  mkdir -p ~/.local/bin && ln -sf $(APP_DIR)/Contents/Resources/bin/wezmux ~/.local/bin/wezmux"
+	@echo "  (or system-wide: sudo ln -sf $(APP_DIR)/Contents/Resources/bin/wezmux /usr/local/bin/wezmux)"
 	@echo "Optional: run 'make install-codex-hooks' to set up Codex integration"
 
 install-codex-hooks:
 	$(APP_DIR)/Contents/Resources/bin/install-codex-hooks.sh
+
+# Install wezmux on a remote host so that `wezmux --ssh HOST` can run the
+# session there. See docs/remote.md.
+install-remote:
+	@test -n "$(HOST)" || (echo "usage: make install-remote HOST=[user@]host"; exit 1)
+	bin/wezmux-install-remote $(HOST)
 
 bundle:
 	cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
@@ -68,6 +77,6 @@ bundle:
 	cp assets/macos/WezTerm.app/Contents/Resources/terminal.icns target/Wezmux.app/Contents/Resources/terminal.icns
 	cp -R bin target/Wezmux.app/Contents/Resources/bin
 	ln -s ../Resources/bin target/Wezmux.app/Contents/MacOS/bin
-	chmod +x target/Wezmux.app/Contents/Resources/bin/claude target/Wezmux.app/Contents/Resources/bin/hooks/*.sh target/Wezmux.app/Contents/Resources/bin/hooks/codex/*.sh target/Wezmux.app/Contents/Resources/bin/install-codex-hooks.sh
+	chmod +x target/Wezmux.app/Contents/Resources/bin/claude target/Wezmux.app/Contents/Resources/bin/wezmux target/Wezmux.app/Contents/Resources/bin/wezmux-install-remote target/Wezmux.app/Contents/Resources/bin/hooks/*.sh target/Wezmux.app/Contents/Resources/bin/hooks/codex/*.sh target/Wezmux.app/Contents/Resources/bin/install-codex-hooks.sh
 	codesign --force --sign - target/Wezmux.app/Contents/MacOS/wezterm-gui
 	@echo "Wezmux.app bundle ready at target/Wezmux.app"
