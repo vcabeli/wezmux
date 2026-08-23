@@ -242,6 +242,24 @@ fn agent_card_title<'a>(
         ])
         .trim_start();
 
+    // OMP owns a run-state prefix in the terminal title (`π >` idle,
+    // `π ⠋` working, `π !` attention). The card already renders the same
+    // state, so keeping OMP's prefix produces two animated indicators.
+    let title = if matches!(agent.agent_type, AgentType::Omp) {
+        title
+            .strip_prefix('\u{03C0}')
+            .map(|rest| {
+                rest.trim_start()
+                    .trim_start_matches(|ch| {
+                        matches!(ch, '>' | '!' | ':') || ('\u{2800}'..='\u{28FF}').contains(&ch)
+                    })
+                    .trim_start()
+            })
+            .unwrap_or(title)
+    } else {
+        title
+    };
+
     let generic = title.is_empty()
         || title == entry.name
         || title.eq_ignore_ascii_case("wezterm")
@@ -1287,6 +1305,25 @@ mod test {
                 agent_card_title(&entry, agent),
                 "Claude Code",
                 "title {title:?} should fall back to the agent name"
+            );
+        }
+    }
+    #[test]
+    fn agent_card_title_strips_omp_run_state_prefix() {
+        for title in [
+            "\u{03C0} > Create PR follow-up",
+            "\u{03C0} \u{280B} Create PR follow-up",
+            "\u{03C0} ! Create PR follow-up",
+            "\u{03C0}: Create PR follow-up",
+        ] {
+            let mut entry = agent_entry(title, Some("omp"));
+            let agent = entry.agent.as_mut().unwrap();
+            agent.agent_type = AgentType::Omp;
+            agent.display_name = "Oh My Pi".to_string();
+
+            assert_eq!(
+                agent_card_title(&entry, entry.agent.as_ref().unwrap()),
+                "Create PR follow-up"
             );
         }
     }
