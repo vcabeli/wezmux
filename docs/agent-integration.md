@@ -1,6 +1,6 @@
 # Agent Integration
 
-Wezmux detects AI coding agents running in your terminal and shows their status on the [sidebar](sidebar.md). It works with Claude Code, Codex, Cursor, Aider, and OpenCode.
+Wezmux detects AI coding agents running in your terminal and shows their status on the [sidebar](sidebar.md). It works with Claude Code, Oh My Pi, Codex, Cursor, Aider, and OpenCode.
 
 ## How agent detection works
 
@@ -17,6 +17,7 @@ If the agent process exits, the status is cleared after a short grace period.
 | Agent | Detection | Structured status (OSC 7777) | Hooks provided |
 |-------|-----------|------------------------------|----------------|
 | **Claude Code** | `claude` in process name | Yes, via hooks | `bin/hooks/on-*.sh` |
+| **Oh My Pi** | `omp` process name | Yes, via extension | `bin/hooks/omp/wezmux.js` |
 | **Codex** | `codex` in process name | Yes, via hooks | `bin/hooks/codex/on-*.sh` |
 | **Cursor** | `cursor` in process name | Fallback to OSC 9 | -- |
 | **Aider** | `aider` in process name | Fallback to OSC 9 | -- |
@@ -24,54 +25,15 @@ If the agent process exits, the status is cleared after a short grace period.
 
 Agents without hooks still get basic sidebar presence (icon + detection), but structured status (working/idle/needs_input) requires [OSC 7777](osc7777.md) integration.
 
-## Installing Claude Code hooks
+## Claude Code integration
 
-Wezmux ships hook scripts that connect Claude Code's lifecycle events to the sidebar via [OSC 7777](osc7777.md).
+Wezmux ships a `claude` wrapper in its terminal-only `PATH`. Inside Wezmux, the
+wrapper injects the bundled lifecycle hooks with Claude Code's `--settings`
+option. Outside Wezmux it passes through to the real `claude` binary unchanged.
+No setup is required.
 
-### Quick install
-
-```bash
-./bin/install-hooks.sh
-```
-
-This copies the hook scripts to `~/.claude/hooks/wezmux/` and prints the settings.json snippet to add.
-
-### Manual setup
-
-1. Copy the scripts from `bin/hooks/` to `~/.claude/hooks/wezmux/`:
-
-    ```bash
-    mkdir -p ~/.claude/hooks/wezmux
-    cp bin/hooks/on-*.sh ~/.claude/hooks/wezmux/
-    chmod +x ~/.claude/hooks/wezmux/*.sh
-    ```
-
-2. Add the hooks to `~/.claude/settings.json`:
-
-    ```json
-    {
-      "hooks": {
-        "Notification": [
-          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-notification.sh", "timeout": 5 }] }
-        ],
-        "Stop": [
-          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-stop.sh", "timeout": 5 }] }
-        ],
-        "UserPromptSubmit": [
-          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-prompt-submit.sh", "timeout": 5 }] }
-        ],
-        "PreToolUse": [
-          { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-needs-input.sh", "timeout": 5 }] }
-        ],
-        "SubagentStart": [
-          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-subagent-start.sh", "timeout": 5 }] }
-        ],
-        "SubagentStop": [
-          { "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezmux/on-subagent-stop.sh", "timeout": 5 }] }
-        ]
-      }
-    }
-    ```
+If a caller supplies its own `--settings` option, the wrapper leaves it
+unchanged instead of replacing it.
 
 ### What each hook does
 
@@ -86,17 +48,27 @@ This copies the hook scripts to `~/.claude/hooks/wezmux/` and prints the setting
 
 Each hook emits both OSC 7777 (for the agent status store) and OSC 9 (for the notification store), so the sidebar gets structured status and notification counts.
 
+## Oh My Pi integration
+
+Wezmux ships an `omp` wrapper beside the Claude Code wrapper. Inside Wezmux, it
+loads `bin/hooks/omp/wezmux.js` with `omp --extension`; outside Wezmux it passes
+through unchanged. No setup is required.
+
+The extension reports prompt/agent lifecycle, tool activity, `ask` and tool
+approval waits, final response previews, and completion notifications.
+
 ## Installing Codex hooks
 
-Codex hooks work the same way but are in `bin/hooks/codex/`:
+Codex integration uses the scripts in `bin/hooks/codex/`. Install them after
+installing Wezmux:
 
 ```bash
-mkdir -p ~/.claude/hooks/wezmux-codex
-cp bin/hooks/codex/on-*.sh ~/.claude/hooks/wezmux-codex/
-chmod +x ~/.claude/hooks/wezmux-codex/*.sh
+make install-codex-hooks
 ```
 
-Then wire them into your Codex configuration following the same pattern as the Claude Code hooks above.
+The installer merges Wezmux entries into `~/.codex/hooks.json`, preserves
+unrelated hooks, enables `[features].hooks` in `~/.codex/config.toml`, and can be
+run again safely after upgrades.
 
 ## Writing hooks for other agents
 

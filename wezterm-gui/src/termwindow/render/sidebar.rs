@@ -195,6 +195,7 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
     match agent_type {
         AgentType::ClaudeCode => "\u{2733}", // ✳ eight spoked asterisk (matches Claude Code's own tab icon)
         AgentType::Codex => "\u{2731}",      // ✱ heavy asterisk
+        AgentType::Omp => "\u{03C0}",        // π for Oh My Pi
         AgentType::Cursor => "\u{2731}",     // ✱ heavy asterisk
         AgentType::Aider => "\u{2731}",      // ✱ heavy asterisk
         AgentType::OpenCode => "\u{2731}",   // ✱ heavy asterisk
@@ -1046,8 +1047,9 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        agent_card_title, format_listening_ports, hex_to_linear, sidebar_entry_body_lines,
-        sidebar_pull_request_text, tint_linear, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
+        agent_card_title, agent_type_icon, format_listening_ports, hex_to_linear,
+        sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear, wrap_text_to_cells,
+        SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
@@ -1338,5 +1340,9 @@ mod test {
                 }
             ]
         );
+    }
+    #[test]
+    fn omp_uses_pi_agent_icon() {
+        assert_eq!(agent_type_icon(AgentType::Omp), "\u{03C0}");
     }
 }
