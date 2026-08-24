@@ -1300,8 +1300,20 @@ impl TermWindow {
                             || size.pixel_height != self.terminal_size.pixel_height
                         {
                             self.set_window_size(size, window)?;
-                        } else if tab_size.dpi == 0 {
-                            log::debug!("fixup dpi in newly added tab");
+                        } else if tab_size.rows != size.rows
+                            || tab_size.cols != size.cols
+                            || tab_size.dpi == 0
+                        {
+                            // The tab is smaller than the window it was added
+                            // to, which is the usual case for a tab that came
+                            // from another host: grow it to fill the window.
+                            log::debug!(
+                                "resizing newly added tab from {}x{} to {}x{}",
+                                tab_size.cols,
+                                tab_size.rows,
+                                size.cols,
+                                size.rows
+                            );
                             tab.resize(self.terminal_size);
                         }
                     }
