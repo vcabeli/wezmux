@@ -2,10 +2,25 @@ use crate::resize_increment_calculator::ResizeIncrementCalculator;
 use crate::utilsprites::RenderMetrics;
 use ::window::{Dimensions, ResizeIncrement, Window, WindowOps, WindowState};
 use config::{ConfigHandle, DimensionContext};
+use mux::tab::Tab;
 use mux::Mux;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
 use wezterm_font::FontConfiguration;
+use wezterm_client::pane::ClientPane;
 use wezterm_term::TerminalSize;
+
+/// How long to wait for a resize to settle before telling another host about
+/// it. Long enough to coalesce a drag, short enough not to be noticed.
+const REMOTE_RESIZE_DEBOUNCE: Duration = Duration::from_millis(150);
+
+/// Whether any of `tab`'s panes live on another host.
+fn tab_is_remote(tab: &Arc<Tab>) -> bool {
+    tab.iter_panes_ignoring_zoom()
+        .iter()
+        .any(|p| p.pane.downcast_ref::<ClientPane>().is_some())
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct RowsAndCols {
@@ -68,6 +83,43 @@ impl super::TermWindow {
             modal.reconfigure(self);
         }
         self.emit_window_event("window-resized", None);
+    }
+
+    /// Apply `size` to tabs hosted on another machine once the resizing
+    /// settles, rather than on every event.
+    fn schedule_remote_tab_resize(&mut self, size: TerminalSize) {
+        self.pending_remote_resize = Some(size);
+        if self.remote_resize_scheduled {
+            return;
+        }
+        self.remote_resize_scheduled = true;
+
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        promise::spawn::spawn(async move {
+            smol::Timer::after(REMOTE_RESIZE_DEBOUNCE).await;
+            window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                |term_window| term_window.flush_remote_tab_resize(),
+            )));
+        })
+        .detach();
+    }
+
+    fn flush_remote_tab_resize(&mut self) {
+        self.remote_resize_scheduled = false;
+        let Some(size) = self.pending_remote_resize.take() else {
+            return;
+        };
+
+        let mux = Mux::get();
+        let remote_tabs: Vec<Arc<Tab>> = match mux.get_window(self.mux_window_id) {
+            Some(window) => window.iter().filter(|tab| tab_is_remote(tab)).cloned().collect(),
+            None => return,
+        };
+        for tab in remote_tabs {
+            tab.resize(size);
+        }
     }
 
     pub fn apply_pending_scale_changes(&mut self) {
@@ -305,11 +357,21 @@ impl super::TermWindow {
         self.terminal_size = size;
 
         let mux = Mux::get();
+        let mut has_remote = false;
         if let Some(window) = mux.get_window(self.mux_window_id) {
             for tab in window.iter() {
-                tab.resize(size);
+                // Resizing a pane on another host costs a round trip, and a
+                // drag produces dozens of events; those are coalesced below.
+                if tab_is_remote(tab) {
+                    has_remote = true;
+                } else {
+                    tab.resize(size);
+                }
             }
         };
+        if has_remote {
+            self.schedule_remote_tab_resize(size);
+        }
         self.resize_overlays();
         self.invalidate_fancy_tab_bar();
         self.update_title();
