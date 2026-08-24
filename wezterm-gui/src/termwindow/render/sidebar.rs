@@ -569,8 +569,45 @@ fn build_card_element(
         .hover_colors(hover_colors)
 }
 
+/// A laid out sidebar, reused between paints while nothing it shows changes.
+///
+/// Laying it out shapes text for every line of every card, which is too much to
+/// repeat for each keystroke, mouse move or resize event.
+pub struct CachedSidebarRender {
+    key: SidebarRenderKey,
+    content_height: f32,
+    cards: crate::termwindow::box_model::ComputedElement,
+    button: crate::termwindow::box_model::ComputedElement,
+    ui_items: Vec<UIItem>,
+}
+
+#[derive(PartialEq)]
+struct SidebarRenderKey {
+    entries: Vec<WorkspaceEntry>,
+    width: u32,
+    height: u32,
+    scroll: i32,
+    dpi: u32,
+    config_generation: usize,
+    /// Advances while an agent is working, to keep its spinner moving.
+    spinner_tick: Option<u128>,
+}
+
+/// How long each frame of the working-agent spinner lasts.
+const SPINNER_FRAME: Duration = Duration::from_millis(120);
+
 impl crate::TermWindow {
     pub fn paint_sidebar(&mut self, layers: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
+        let started = Instant::now();
+        let result = self.paint_sidebar_impl(layers);
+        metrics::histogram!("gui.paint.sidebar").record(started.elapsed());
+        result
+    }
+
+    fn paint_sidebar_impl(
+        &mut self,
+        layers: &mut TripleLayerQuadAllocator,
+    ) -> anyhow::Result<()> {
         let sidebar_width = self.sidebar_pixel_width();
         if sidebar_width <= 0.0 {
             return Ok(());
@@ -640,6 +677,99 @@ impl crate::TermWindow {
             .floor()
             .max(1.0) as usize;
 
+        let entries = self.sidebar_entries();
+        let spinner_tick = if entries.iter().any(|entry| {
+            entry.agent.as_ref().map(|agent| agent.status) == Some(AgentStatus::Working)
+        }) {
+            self.update_next_frame_time(Some(Instant::now() + SPINNER_FRAME));
+            Some(self.created.elapsed().as_millis() / SPINNER_FRAME.as_millis())
+        } else {
+            None
+        };
+
+        // Reserve space at the bottom for the fixed "New workspace" button
+        let new_ws_button_height = 40.0_f32;
+        let scrollable_height = (sidebar_height - new_ws_button_height).max(0.0);
+
+        // Clamp the scroll offset against the height measured last time, so
+        // that a reusable layout stays reusable.
+        if let Some(cached) = self.sidebar_render.as_ref() {
+            let max_scroll = (cached.content_height - scrollable_height).max(0.0);
+            self.sidebar.scroll_offset = self.sidebar.scroll_offset.clamp(0.0, max_scroll);
+        }
+
+        let key = SidebarRenderKey {
+            entries: entries.clone(),
+            width: sidebar_width as u32,
+            height: sidebar_height as u32,
+            scroll: self.sidebar.scroll_offset as i32,
+            dpi: self.dimensions.dpi as u32,
+            config_generation: self.config.generation(),
+            spinner_tick,
+        };
+
+        let cached = match self.sidebar_render.take() {
+            Some(cached) if cached.key == key => cached,
+            _ => {
+                let started = Instant::now();
+                let built = self.build_sidebar_render(
+                key,
+                &entries,
+                sidebar_x,
+                sidebar_y,
+                content_width,
+                scrollable_height,
+                new_ws_button_height,
+                text_cols,
+                    mono_cols,
+                    &theme,
+                )?;
+                metrics::histogram!("gui.sidebar.layout").record(started.elapsed());
+                built
+            }
+        };
+
+        let gl_state = self.render_state.as_ref().unwrap();
+        self.render_element(&cached.cards, gl_state, None)?;
+
+        // Background hit region FIRST (lowest priority — pushed before card items)
+        // Hit-testing iterates in reverse, so items pushed later win.
+        self.ui_items.push(UIItem {
+            x: sidebar_x as usize,
+            y: sidebar_y as usize,
+            width: (content_width) as usize,
+            height: sidebar_height as usize,
+            item_type: UIItemType::SidebarBackground,
+        });
+
+        self.render_element(&cached.button, gl_state, None)?;
+        self.ui_items.extend(cached.ui_items.iter().cloned());
+
+        self.sidebar_render = Some(cached);
+        Ok(())
+    }
+
+    /// Lay the sidebar out: the toolbar row, one card per workspace, and the
+    /// button pinned at the bottom.
+    #[allow(clippy::too_many_arguments)]
+    fn build_sidebar_render(
+        &self,
+        key: SidebarRenderKey,
+        entries: &[WorkspaceEntry],
+        sidebar_x: f32,
+        sidebar_y: f32,
+        content_width: f32,
+        scrollable_height: f32,
+        new_ws_button_height: f32,
+        text_cols: usize,
+        mono_cols: usize,
+        theme: &SidebarTheme,
+    ) -> anyhow::Result<CachedSidebarRender> {
+        let font = self.fonts.title_font()?;
+        let body_font = self.fonts.sidebar_body_font()?;
+        let mono_font = self.fonts.sidebar_meta_font()?;
+        let metrics = RenderMetrics::with_font_metrics(&font.metrics());
+
         // Build Element tree
         let mut root_children: Vec<Element> = vec![];
 
@@ -699,14 +829,8 @@ impl crate::TermWindow {
         );
 
         // Workspace cards
-        let entries = self.sidebar_entries();
         let milliseconds = self.created.elapsed().as_millis();
-        if entries.iter().any(|entry| {
-            entry.agent.as_ref().map(|agent| agent.status) == Some(AgentStatus::Working)
-        }) {
-            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
-        }
-        for entry in &entries {
+        for entry in entries {
             root_children.push(build_card_element(
                 &font,
                 &body_font,
@@ -715,14 +839,10 @@ impl crate::TermWindow {
                 text_cols,
                 mono_cols,
                 content_width,
-                &theme,
+                theme,
                 milliseconds,
             ));
         }
-
-        // Reserve space at the bottom for the fixed "New workspace" button
-        let new_ws_button_height = 40.0_f32;
-        let scrollable_height = (sidebar_height - new_ws_button_height).max(0.0);
 
         let root = Element::new(&font, ElementContent::Children(root_children))
             .display(DisplayType::Block)
@@ -755,32 +875,15 @@ impl crate::TermWindow {
             &root,
         )?;
 
-        // Clamp scroll offset: content height minus visible height, minimum 0
         let content_height = computed.bounds.height();
-        let max_scroll = (content_height - scrollable_height).max(0.0);
-        self.sidebar.scroll_offset = self.sidebar.scroll_offset.clamp(0.0, max_scroll);
-        let scroll_offset = self.sidebar.scroll_offset;
+        let scroll_offset = self
+            .sidebar
+            .scroll_offset
+            .clamp(0.0, (content_height - scrollable_height).max(0.0));
 
         // Translate to sidebar position, applying scroll offset
         computed.translate(euclid::vec2(sidebar_x, sidebar_y - scroll_offset));
-
-        // Render via box_model
-        self.render_element(&computed, gl_state, None)?;
-
-        // Background hit region FIRST (lowest priority — pushed before card items)
-        // Hit-testing iterates in reverse, so items pushed later win.
-        self.ui_items.push(UIItem {
-            x: sidebar_x as usize,
-            y: sidebar_y as usize,
-            width: (content_width) as usize,
-            height: sidebar_height as usize,
-            item_type: UIItemType::SidebarBackground,
-        });
-
-        // Card + button UI items on top (higher priority for clicks)
-        for item in computed.ui_items() {
-            self.ui_items.push(item);
-        }
+        let mut ui_items = computed.ui_items();
 
         // "New workspace" button — fixed at the bottom of the sidebar (not scrollable)
         let new_ws_label =
@@ -857,12 +960,15 @@ impl crate::TermWindow {
         )?;
 
         btn_computed.translate(euclid::vec2(sidebar_x, button_y));
-        self.render_element(&btn_computed, gl_state, None)?;
-        for item in btn_computed.ui_items() {
-            self.ui_items.push(item);
-        }
+        ui_items.extend(btn_computed.ui_items());
 
-        Ok(())
+        Ok(CachedSidebarRender {
+            key,
+            content_height,
+            cards: computed,
+            button: btn_computed,
+            ui_items,
+        })
     }
 }
 

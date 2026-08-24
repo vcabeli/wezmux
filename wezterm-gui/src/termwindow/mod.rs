@@ -403,6 +403,10 @@ pub struct TermWindow {
     sidebar: sidebar::SidebarState,
     tab_bar: TabBarState,
     fancy_tab_bar: Option<box_model::ComputedElement>,
+    sidebar_render: Option<crate::termwindow::render::sidebar::CachedSidebarRender>,
+    /// Size that panes on another host still need to be told about.
+    pending_remote_resize: Option<TerminalSize>,
+    remote_resize_scheduled: bool,
     pub right_status: String,
     pub left_status: String,
     last_ui_item: Option<UIItem>,
@@ -727,6 +731,9 @@ impl TermWindow {
             sidebar: sidebar::SidebarState::new(&config),
             tab_bar: TabBarState::default(),
             fancy_tab_bar: None,
+            sidebar_render: None,
+            pending_remote_resize: None,
+            remote_resize_scheduled: false,
             right_status: String::new(),
             left_status: String::new(),
             last_mouse_coords: (0, -1),
@@ -1233,8 +1240,7 @@ impl TermWindow {
                     alert: Alert::OutputSinceFocusLost | Alert::CurrentWorkingDirectoryChanged,
                     ..
                 } => {
-                    self.sidebar.invalidate_cache();
-                    self.schedule_sidebar_metadata_refresh();
+                    self.refresh_sidebar();
                     self.update_title();
                 }
                 MuxNotification::Alert {
@@ -1337,7 +1343,7 @@ impl TermWindow {
                 }
                 MuxNotification::PaneFocused(_) => {
                     // Also handled by clientpane
-                    self.schedule_sidebar_metadata_refresh();
+                    self.refresh_sidebar();
                     self.update_title_post_status();
                     window.invalidate();
                 }
@@ -1350,7 +1356,7 @@ impl TermWindow {
                 }
                 MuxNotification::PaneRemoved(pane_id) => {
                     self.sidebar.last_known_agents.remove(&pane_id);
-                    self.schedule_sidebar_metadata_refresh();
+                    self.refresh_sidebar();
                 }
                 MuxNotification::PaneAdded(_)
                 | MuxNotification::WorkspaceRenamed { .. }
@@ -1358,7 +1364,7 @@ impl TermWindow {
                 | MuxNotification::WindowCreated(_) => {}
                 MuxNotification::WindowWorkspaceChanged(_)
                 | MuxNotification::ActiveWorkspaceChanged(_) => {
-                    self.schedule_sidebar_metadata_refresh();
+                    self.refresh_sidebar();
                 }
             },
             TermWindowNotif::EmitStatusUpdate => {

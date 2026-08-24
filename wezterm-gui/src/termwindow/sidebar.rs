@@ -557,10 +557,18 @@ impl crate::TermWindow {
         entries
     }
 
+    /// Ask for a metadata pass. Cheap: no repaint and no layout thrown away,
+    /// so it is safe to call for every chunk of pane output.
     pub fn schedule_sidebar_metadata_refresh(&mut self) {
         self.sidebar
             .schedule_metadata_refresh(SIDEBAR_METADATA_COALESCE_DELAY);
-        self.invalidate_fancy_tab_bar();
+    }
+
+    /// As above, and redraw now: for the events that change what the sidebar
+    /// shows rather than merely when it was last gathered.
+    pub fn refresh_sidebar(&mut self) {
+        self.schedule_sidebar_metadata_refresh();
+        self.sidebar.invalidate_cache();
         if let Some(window) = self.window.as_ref() {
             window.invalidate();
         }

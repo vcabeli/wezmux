@@ -54,6 +54,8 @@ const PLUS_BUTTON: &[Poly] = &[
 impl crate::TermWindow {
     pub fn invalidate_fancy_tab_bar(&mut self) {
         self.fancy_tab_bar.take();
+        // The sidebar layout depends on the same fonts and colours.
+        self.sidebar_render.take();
     }
 
     pub fn build_fancy_tab_bar(&self, palette: &ColorPalette) -> anyhow::Result<ComputedElement> {
