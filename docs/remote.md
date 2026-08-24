@@ -44,10 +44,18 @@ This copies your local checkout to the host, builds it there, and installs into 
 
 The wrapper and hooks live in the same directory as the binaries on purpose: the mux server finds them by looking for a sibling `bin/claude`, sets `WEZMUX=1` and `WEZMUX_BIN`, and puts them on the PATH of every shell it spawns. That is what makes `claude` on the remote host pick up wezmux's hooks automatically, exactly as it does locally.
 
-The host needs `rsync`, `cmake`, `pkg-config`, a C/C++ compiler, the OpenSSL headers and a Rust toolchain. It does **not** need the GUI dependencies from `./get-deps`: only the CLI and the mux server are built there.
+Two ways to get it there:
+
+| | On the host | Time |
+|---|---|---|
+| `--binaries DIR` | 56 MB installed, nothing else | the upload |
+| build there (default) | + ~115 MB of sources and ~1.3 GB of build output, plus ~1.9 GB for a toolchain if `--install-rust` puts one there | a few minutes |
+
+`--binaries DIR` installs binaries you already have for that platform — from CI, another machine of the same kind, or a cross build — and needs no toolchain, no build dependencies and no sources on the host. Otherwise the host needs `rsync`, `cmake`, `pkg-config`, a C/C++ compiler, the OpenSSL headers and a Rust toolchain; it does **not** need the GUI dependencies from `./get-deps`, since only the CLI and the mux server are built there.
 
 | Option | Effect |
 |--------|--------|
+| `--binaries DIR` | install prebuilt binaries instead of building on the host |
 | `--install-deps` | install the missing OS packages (apt/dnf/pacman/zypper) |
 | `--install-rust` | install a Rust toolchain with rustup (no sudo needed) |
 | `--data-dir DIR` | put sources, build output, toolchain and the install under `DIR` |
@@ -135,6 +143,15 @@ For a host where nothing can be installed, `wezmux ssh HOST` still opens a plain
 **No agent status for remote agents.** Check that `claude` on the remote host resolves to the wrapper: `ssh HOST 'echo $WEZMUX_BIN'` inside a wezmux pane should print the install directory, and `which claude` should point into it.
 
 **Verbose logging.** Start the GUI with `RUST_LOG=wezterm_client=debug,mux=debug` to see the connection and metadata traffic.
+
+## Why not tmux
+
+tmux would give persistence with nothing to install, and wezterm can drive it in control mode. Two things make it a poor fit here:
+
+- tmux discards OSC sequences it does not recognise, and the agent hooks report status with [OSC 7777](osc7777.md). It would take `allow-passthrough` on the server plus escape wrapping in every hook to get agent status through.
+- There would be no server to answer the sidebar's metadata request, so the git, PR and port lines would need a second ssh channel per refresh.
+
+Both of the things the sidebar exists to show would regress, so wezmux runs its own mux server instead and keeps the install as small as it can.
 
 ## Limitations
 

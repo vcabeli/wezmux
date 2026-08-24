@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-readonly BUILD_PACKAGES='wezterm wezterm-mux-server strip-ansi-escapes'
+readonly BUILD_PACKAGES='wezterm wezterm-mux-server'
 readonly NEED_TARGET_MB=3000
 readonly NEED_SRC_MB=400
 readonly NEED_PREFIX_MB=200
@@ -37,6 +37,9 @@ Paths on the remote host:
   --rustup-home DIR RUSTUP_HOME             (default: the host's own)
 
 Setup:
+  --binaries DIR    install binaries already built for the host from DIR,
+                    instead of copying sources and building there. Needs no
+                    toolchain, no build dependencies and no sources on the host
   --install-deps    install missing OS packages (uses sudo on the host)
   --install-rust    install a Rust toolchain with rustup (no sudo needed)
 
@@ -64,6 +67,7 @@ SRC='$HOME/.cache/wezmux/src'
 TARGET_DIR=""
 CARGO_HOME_DIR=""
 RUSTUP_HOME_DIR=""
+BINARIES_DIR=""
 INSTALL_DEPS=0
 INSTALL_RUST=0
 DO_BUILD=1
@@ -81,6 +85,7 @@ while [ $# -gt 0 ]; do
     --target-dir) TARGET_DIR="$2"; shift 2 ;;
     --cargo-home) CARGO_HOME_DIR="$2"; shift 2 ;;
     --rustup-home) RUSTUP_HOME_DIR="$2"; shift 2 ;;
+    --binaries) BINARIES_DIR="$2"; shift 2 ;;
     --install-deps) INSTALL_DEPS=1; shift ;;
     --install-rust) INSTALL_RUST=1; shift ;;
     --no-build) DO_BUILD=0; shift ;;
@@ -147,6 +152,13 @@ $1"; }
 echo "==> Checking $HOST"
 remote 'command -v rsync >/dev/null 2>&1' || die "rsync is required on $HOST"
 
+if [ -n "$BINARIES_DIR" ]; then
+  for b in $BUILD_PACKAGES; do
+    [ -x "$BINARIES_DIR/$b" ] || die "$BINARIES_DIR/$b is missing or not executable"
+  done
+  DO_BUILD=0
+fi
+
 # Only what the CLI and mux server need; not the GUI dependency set.
 IFS='|' read -r PKG_MGR PKG_INSTALL PKG_LIST <<<"$(remote '
   if command -v apt-get >/dev/null 2>&1; then
@@ -184,7 +196,8 @@ install_deps() {
   fi
 }
 
-MISSING="$(missing_tools)"
+MISSING=""
+[ "$DO_BUILD" = 1 ] && MISSING="$(missing_tools)"
 if [ -n "$MISSING" ]; then
   if [ "$INSTALL_DEPS" = 1 ]; then
     install_deps
@@ -237,19 +250,42 @@ Point it at a bigger filesystem, e.g.
 }
 
 EFFECTIVE_TARGET="${TARGET_DIR:-$SRC/target}"
-check_space "$SRC" "$NEED_SRC_MB" "sources"
 check_space "$PREFIX" "$NEED_PREFIX_MB" "install"
-[ "$DO_BUILD" = 1 ] && check_space "$EFFECTIVE_TARGET" "$NEED_TARGET_MB" "build output"
+if [ "$DO_BUILD" = 1 ]; then
+  check_space "$SRC" "$NEED_SRC_MB" "sources"
+  check_space "$EFFECTIVE_TARGET" "$NEED_TARGET_MB" "build output"
+fi
 
 # --- copy, build, install ---------------------------------------------------
+
+if [ -n "$BINARIES_DIR" ]; then
+  echo "==> Copying binaries to $HOST:$PREFIX"
+  STAGING="$PREFIX/.staging"
+  remote "rm -rf \"$STAGING\" && mkdir -p \"$STAGING/bin\""
+  REMOTE_STAGING="$(remote "cd \"$STAGING\" && pwd")"
+  # rsync writes to a temporary name and renames, so this is safe even while a
+  # mux server is executing the old binary.
+  for b in $BUILD_PACKAGES; do
+    rsync -az "$BINARIES_DIR/$b" "$HOST:$REMOTE_STAGING/"
+  done
+  rsync -az "$REPO/bin/claude" "$HOST:$REMOTE_STAGING/bin/"
+  rsync -az --delete "$REPO/bin/hooks/" "$HOST:$REMOTE_STAGING/bin/hooks/"
+  REMOTE_SRC="$REMOTE_STAGING"
+  PREBUILT_DIR="$REMOTE_STAGING"
+else
 
 echo "==> Copying sources to $HOST:$SRC (a few hundred MB the first time)"
 remote "mkdir -p \"$SRC\""
 REMOTE_SRC="$(remote "cd \"$SRC\" && pwd")"
 # Not routed through the shared connection: openrsync (macOS) mishandles a
-# multi-option -e. /docs is excluded; nothing in the build reads it.
+# multi-option -e. The excluded trees are not read by the CLI or mux server
+# build: docs, and the vendored C libraries that only the GUI needs.
 rsync -az --delete \
   --exclude '/target' --exclude '/.git' --exclude '/docs' \
+  --exclude 'deps/harfbuzz/harfbuzz/***' \
+  --exclude 'deps/freetype/freetype2/***' \
+  --exclude 'deps/freetype/libpng/***' \
+  --exclude 'deps/freetype/zlib/***' \
   "$REPO/" "$HOST:$REMOTE_SRC/"
 
 # The version is derived from git at build time and .git is not copied, so pass
@@ -269,13 +305,22 @@ if [ "$DO_BUILD" = 0 ]; then
 fi
 
 echo "==> Building on $HOST (several minutes the first time)"
+# Symbols dominate the installed size and nothing on the host reads them.
+REMOTE_ENV="$REMOTE_ENV
+export CARGO_PROFILE_RELEASE_STRIP=symbols"
 # shellcheck disable=SC2086  # BUILD_PACKAGES and JOBS are deliberately split
 remote "cd \"$REMOTE_SRC\" && cargo build --release ${JOBS:+--jobs $JOBS} \
   $(for p in $BUILD_PACKAGES; do printf -- '-p %s ' "$p"; done)"
 
+fi
+
 echo "==> Installing into $HOST:$PREFIX/bin"
-BUILT_DIR="${TARGET_DIR:+$TARGET_DIR/release}"
-BUILT_DIR="${BUILT_DIR:-$REMOTE_SRC/target/release}"
+if [ -n "${PREBUILT_DIR:-}" ]; then
+  BUILT_DIR="$PREBUILT_DIR"
+else
+  BUILT_DIR="${TARGET_DIR:+$TARGET_DIR/release}"
+  BUILT_DIR="${BUILT_DIR:-$REMOTE_SRC/target/release}"
+fi
 LINK_CMD=""
 if [ "$DO_LINK" = 1 ]; then
   LINK_CMD='mkdir -p "$HOME/.local/bin"
@@ -302,6 +347,8 @@ remote "
   $LINK_CMD
   \"\$prefix/bin/wezterm\" --version
 "
+
+[ -n "${PREBUILT_DIR:-}" ] && remote "rm -rf \"$PREBUILT_DIR\""
 
 REMOTE_WEZTERM="$(remote "echo \"$PREFIX/bin/wezterm\"")"
 
