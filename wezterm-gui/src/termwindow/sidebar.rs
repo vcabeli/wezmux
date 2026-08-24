@@ -18,6 +18,12 @@ use std::time::{Duration, Instant};
 
 const SIDEBAR_METADATA_COALESCE_DELAY: Duration = Duration::from_millis(200);
 const SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Floor on how often one workspace's metadata is gathered. Pane output alone
+/// asks for a refresh many times a second while you type; a local pass costs a
+/// git status, and a remote one costs a round trip plus a git status on that
+/// host, so the two are throttled differently.
+const SIDEBAR_METADATA_MIN_INTERVAL_LOCAL: Duration = Duration::from_millis(500);
+const SIDEBAR_METADATA_MIN_INTERVAL_REMOTE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Default)]
 pub struct SidebarState {
@@ -29,6 +35,8 @@ pub struct SidebarState {
     metadata_targets: Vec<WorkspaceMetadataTarget>,
     pub metadata_refresh_in_flight: bool,
     pub next_metadata_refresh: Option<Instant>,
+    /// When each workspace's metadata was last gathered.
+    metadata_refreshed_at: HashMap<String, Instant>,
     /// Cached sidebar entries from previous frame.
     cached_entries: Option<Vec<WorkspaceEntry>>,
     /// Workspace count at last cache build (invalidate on structural change).
@@ -93,6 +101,18 @@ pub struct AgentInfo {
 struct WorkspaceMetadataTarget {
     workspace_name: String,
     domain_id: mux::domain::DomainId,
+    /// Whether answering for this workspace costs a round trip.
+    is_remote: bool,
+}
+
+impl WorkspaceMetadataTarget {
+    fn min_interval(&self) -> Duration {
+        if self.is_remote {
+            SIDEBAR_METADATA_MIN_INTERVAL_REMOTE
+        } else {
+            SIDEBAR_METADATA_MIN_INTERVAL_LOCAL
+        }
+    }
 }
 
 impl SidebarState {
@@ -140,6 +160,7 @@ impl SidebarState {
             metadata_targets: vec![],
             metadata_refresh_in_flight: false,
             next_metadata_refresh: None,
+            metadata_refreshed_at: HashMap::new(),
             cached_entries: None,
             cached_workspace_count: 0,
             cached_active_workspace: String::new(),
@@ -440,9 +461,18 @@ impl crate::TermWindow {
                 }
 
                 if let Some(domain_id) = domain_id {
+                    let is_remote = mux
+                        .get_domain(domain_id)
+                        .map(|domain| {
+                            domain
+                                .downcast_ref::<wezterm_client::domain::ClientDomain>()
+                                .is_some()
+                        })
+                        .unwrap_or(false);
                     refresh_targets.push(WorkspaceMetadataTarget {
                         workspace_name: name.clone(),
                         domain_id,
+                        is_remote,
                     });
                 }
 
@@ -892,7 +922,22 @@ impl crate::TermWindow {
             return;
         }
 
-        let targets = targets.to_vec();
+        let now = Instant::now();
+        let targets: Vec<_> = targets
+            .iter()
+            .filter(|target| {
+                self.sidebar
+                    .metadata_refreshed_at
+                    .get(&target.workspace_name)
+                    .map(|last| now.duration_since(*last) >= target.min_interval())
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+
         let Some(window) = self.window.as_ref().cloned() else {
             return;
         };
@@ -941,7 +986,17 @@ impl crate::TermWindow {
             mux.set_sidebar_cache(cache);
         }
 
-        self.sidebar.metadata = metadata;
+        let now = Instant::now();
+        for workspace in metadata.keys() {
+            self.sidebar
+                .metadata_refreshed_at
+                .insert(workspace.clone(), now);
+        }
+        self.sidebar.metadata.extend(metadata);
+        let known: Vec<String> = self.sidebar.metadata.keys().cloned().collect();
+        self.sidebar
+            .metadata_refreshed_at
+            .retain(|workspace, _| known.contains(workspace));
         self.sidebar.metadata_refresh_in_flight = false;
         self.invalidate_fancy_tab_bar();
 
