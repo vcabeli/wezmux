@@ -251,6 +251,9 @@ pub fn domain_config_for_host(config: &ConfigHandle, host: &str) -> anyhow::Resu
         remote_address: params.host_and_port,
         username: params.username,
         multiplexing: SshMultiplexing::WezTerm,
+        // Derived Default leaves this None, which turns off predictive echo and
+        // makes every keystroke wait for a round trip.
+        local_echo_threshold_ms: config::default_local_echo_threshold_ms(),
         ..Default::default()
     })
 }
@@ -310,6 +313,13 @@ mod test {
         assert_eq!(dom.multiplexing, SshMultiplexing::WezTerm);
         // Resolved on connect rather than guessed here.
         assert_eq!(dom.remote_wezterm_path, None);
+        // Without this, predictive echo is off and every keystroke waits for a
+        // round trip.
+        assert_eq!(
+            dom.local_echo_threshold_ms,
+            config::default_local_echo_threshold_ms()
+        );
+        assert!(dom.local_echo_threshold_ms.is_some());
     }
 
     #[test]
