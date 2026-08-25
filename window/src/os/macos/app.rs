@@ -1,10 +1,9 @@
 use crate::connection::ConnectionOps;
 use crate::macos::menu::RepresentedItem;
-use crate::macos::{nsstring, nsstring_to_str};
+use crate::macos::nsstring_to_str;
 use crate::menu::{Menu, MenuItem};
 use crate::{ApplicationEvent, Connection};
 use cocoa::appkit::NSApplicationTerminateReply;
-use cocoa::base::id;
 use config::keyassignment::KeyAssignment;
 use objc::declare::ClassDecl;
 use objc::rc::StrongPtr;

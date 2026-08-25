@@ -13,7 +13,6 @@ use config::{Dimension, DimensionContext};
 use std::env;
 use std::path::Path;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 use wezterm_font::LoadedFont;
 use window::color::LinearRgba;
 
@@ -202,25 +201,6 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
     }
 }
 
-fn working_spinner_frame(milliseconds: u128) -> &'static str {
-    const FRAMES: [&str; 10] = [
-        "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
-        "\u{2827}", "\u{2807}", "\u{280F}",
-    ];
-    FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize]
-}
-
-fn sidebar_agent_title_icon(
-    agent: &crate::termwindow::sidebar::AgentInfo,
-    milliseconds: u128,
-) -> &'static str {
-    if matches!(agent.status, AgentStatus::Working) {
-        working_spinner_frame(milliseconds)
-    } else {
-        agent_type_icon(agent.agent_type)
-    }
-}
-
 /// Title text for a card whose active pane runs an agent.
 ///
 /// Agents like Claude Code and Codex set the terminal title to a short
@@ -231,22 +211,18 @@ fn agent_card_title<'a>(
     entry: &'a WorkspaceEntry,
     agent: &'a crate::termwindow::sidebar::AgentInfo,
 ) -> &'a str {
-    // Strip the leading status glyph agents embed in their titles
-    // (e.g. Claude Code's "✳ summary"); the sidebar renders its own
-    // animated icon in front of the title.
-    let title = entry
-        .title
-        .trim()
+    let title = entry.title.trim();
+
+    // Normalize agent-owned status prefixes only to decide whether a title is
+    // generic. A useful title is returned verbatim: its own live status glyph
+    // is more accurate than a second animation synthesized by the sidebar.
+    let summary = title
         .trim_start_matches([
             '\u{2733}', '\u{2731}', '\u{273B}', '\u{2736}', '\u{00B7}', '*',
         ])
         .trim_start();
-
-    // OMP owns a run-state prefix in the terminal title (`π >` idle,
-    // `π ⠋` working, `π !` attention). The card already renders the same
-    // state, so keeping OMP's prefix produces two animated indicators.
-    let title = if matches!(agent.agent_type, AgentType::Omp) {
-        title
+    let summary = if matches!(agent.agent_type, AgentType::Omp) {
+        summary
             .strip_prefix('\u{03C0}')
             .map(|rest| {
                 rest.trim_start()
@@ -255,27 +231,39 @@ fn agent_card_title<'a>(
                     })
                     .trim_start()
             })
-            .unwrap_or(title)
+            .unwrap_or(summary)
     } else {
-        title
+        summary
     };
 
-    let generic = title.is_empty()
-        || title == entry.name
-        || title.eq_ignore_ascii_case("wezterm")
-        || title.eq_ignore_ascii_case(&agent.display_name)
+    let generic = summary.is_empty()
+        || summary == entry.name
+        || summary.eq_ignore_ascii_case("wezterm")
+        || summary.eq_ignore_ascii_case(&agent.display_name)
         || entry
             .foreground_process_name
             .as_deref()
-            .is_some_and(|name| title.eq_ignore_ascii_case(name))
+            .is_some_and(|name| summary.eq_ignore_ascii_case(name))
         // Single-word titles are the process-name fallback from
         // sidebar_title_from_pane ("claude", "node"), not generated
         // summaries, which are always short phrases.
-        || !title.contains(' ');
+        || !summary.contains(' ');
     if generic {
         &agent.display_name
     } else {
         title
+    }
+}
+
+fn agent_card_heading(
+    entry: &WorkspaceEntry,
+    agent: &crate::termwindow::sidebar::AgentInfo,
+) -> String {
+    let title = agent_card_title(entry, agent);
+    if title == agent.display_name {
+        format!("{} {}", agent_type_icon(agent.agent_type), title)
+    } else {
+        title.to_string()
     }
 }
 
@@ -449,7 +437,6 @@ fn build_card_element(
     mono_cols: usize,
     card_width: f32,
     theme: &SidebarTheme,
-    milliseconds: u128,
 ) -> Element {
     let is_active = entry.is_active;
     let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
@@ -500,12 +487,8 @@ fn build_card_element(
     }
 
     // Title line (with optional unread badge prefix and nerd font icon)
-    let base_title = if let Some(ref agent) = entry.agent {
-        format!(
-            "{} {}",
-            sidebar_agent_title_icon(agent, milliseconds),
-            agent_card_title(entry, agent)
-        )
+    let base_title = if let Some(agent) = &entry.agent {
+        agent_card_heading(entry, agent)
     } else if let Some(icon) = entry
         .foreground_process_name
         .as_deref()
@@ -817,12 +800,6 @@ impl crate::TermWindow {
 
         // Workspace cards
         let entries = self.sidebar_entries();
-        let milliseconds = self.created.elapsed().as_millis();
-        if entries.iter().any(|entry| {
-            entry.agent.as_ref().map(|agent| agent.status) == Some(AgentStatus::Working)
-        }) {
-            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
-        }
         for entry in &entries {
             root_children.push(build_card_element(
                 &font,
@@ -833,7 +810,6 @@ impl crate::TermWindow {
                 mono_cols,
                 content_width,
                 &theme,
-                milliseconds,
             ));
         }
 
@@ -1065,9 +1041,9 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        agent_card_title, agent_type_icon, format_listening_ports, hex_to_linear,
-        sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear, wrap_text_to_cells,
-        SidebarLine, SidebarLineStyle,
+        agent_card_heading, agent_card_title, agent_type_icon, format_listening_ports,
+        hex_to_linear, sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear,
+        wrap_text_to_cells, SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
@@ -1281,11 +1257,13 @@ mod test {
     }
 
     #[test]
-    fn agent_card_title_prefers_generated_tab_title() {
+    fn agent_card_title_preserves_generated_tab_title() {
         let entry = agent_entry("\u{2733} Figure 26b missing x axis", Some("node"));
         let agent = entry.agent.as_ref().unwrap();
-        // Leading status glyph is stripped; the summary itself is kept.
-        assert_eq!(agent_card_title(&entry, agent), "Figure 26b missing x axis");
+        assert_eq!(
+            agent_card_heading(&entry, agent),
+            "\u{2733} Figure 26b missing x axis"
+        );
     }
 
     #[test]
@@ -1309,7 +1287,7 @@ mod test {
         }
     }
     #[test]
-    fn agent_card_title_strips_omp_run_state_prefix() {
+    fn agent_card_title_preserves_omp_run_state_prefix() {
         for title in [
             "\u{03C0} > Create PR follow-up",
             "\u{03C0} \u{280B} Create PR follow-up",
@@ -1322,10 +1300,23 @@ mod test {
             agent.display_name = "Oh My Pi".to_string();
 
             assert_eq!(
-                agent_card_title(&entry, entry.agent.as_ref().unwrap()),
-                "Create PR follow-up"
+                agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+                title
             );
         }
+    }
+
+    #[test]
+    fn agent_card_heading_does_not_duplicate_codex_status_glyph() {
+        let mut entry = agent_entry("\u{280B} Running cargo tests", Some("codex"));
+        let agent = entry.agent.as_mut().unwrap();
+        agent.agent_type = AgentType::Codex;
+        agent.display_name = "Codex".to_string();
+
+        assert_eq!(
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            "\u{280B} Running cargo tests"
+        );
     }
 
     #[test]
