@@ -2,10 +2,10 @@ use super::*;
 use crate::connection::ConnectionOps;
 use crate::parameters::{self, Parameters};
 use crate::{
-    Appearance, Clipboard, DeadKeyStatus, Dimensions, Handled, KeyCode, KeyEvent, Modifiers,
-    MouseButtons, MouseCursor, MouseEvent, MouseEventKind, MousePress, Point, RawKeyEvent, Rect,
-    RequestedWindowGeometry, ResolvedGeometry, ScreenPoint, ScreenRect, ULength, WindowDecorations,
-    WindowEvent, WindowEventSender, WindowOps, WindowState,
+    Appearance, Clipboard, ContextMenuItem, ContextMenuNotification, DeadKeyStatus, Dimensions,
+    Handled, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseCursor, MouseEvent, MouseEventKind,
+    MousePress, Point, RawKeyEvent, Rect, RequestedWindowGeometry, ResolvedGeometry, ScreenPoint,
+    ScreenRect, ULength, WindowDecorations, WindowEvent, WindowEventSender, WindowOps, WindowState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -1042,6 +1042,87 @@ impl WindowOps for Window {
                 color: top_border_color,
             }),
         }))
+    }
+
+    fn show_context_menu(&self, items: Vec<ContextMenuItem>, coords: ScreenPoint) {
+        let window = self.0;
+        promise::spawn::spawn_into_main_thread(async move {
+            // TrackPopupMenu runs a nested modal message loop, so it must not be
+            // called while WindowInner is mutably borrowed by the event dispatch
+            // that led here; deferring to the main thread queue avoids that.
+            if let Some(tag) = unsafe { track_context_menu(window.0, &items, coords) } {
+                Connection::with_window_inner(window, move |inner| {
+                    inner.events.dispatch(WindowEvent::Notification(Box::new(
+                        ContextMenuNotification(tag),
+                    )));
+                    Ok(())
+                });
+            }
+        })
+        .detach();
+    }
+}
+
+unsafe fn build_context_menu(items: &[ContextMenuItem]) -> HMENU {
+    let menu = CreatePopupMenu();
+    for item in items {
+        match item {
+            ContextMenuItem::Entry { label, tag } => {
+                // Command id 0 means "dismissed" to TrackPopupMenu, so bias by 1
+                AppendMenuW(menu, MF_STRING, *tag + 1, wide_string(label).as_ptr());
+            }
+            ContextMenuItem::Separator => {
+                AppendMenuW(menu, MF_SEPARATOR, 0, null());
+            }
+            ContextMenuItem::SubMenu { label, items } => {
+                let sub_menu = build_context_menu(items);
+                AppendMenuW(
+                    menu,
+                    MF_POPUP,
+                    sub_menu as usize,
+                    wide_string(label).as_ptr(),
+                );
+            }
+        }
+    }
+    menu
+}
+
+unsafe fn track_context_menu(
+    hwnd: HWND,
+    items: &[ContextMenuItem],
+    coords: ScreenPoint,
+) -> Option<usize> {
+    if hwnd.is_null() {
+        return None;
+    }
+    let menu = build_context_menu(items);
+    if menu.is_null() {
+        return None;
+    }
+    let point = client_to_screen(hwnd, Point::new(coords.x, coords.y));
+
+    if GetCapture() == hwnd {
+        ReleaseCapture();
+    }
+    SetForegroundWindow(hwnd);
+    let cmd = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
+        point.x as i32,
+        point.y as i32,
+        0,
+        hwnd,
+        null(),
+    );
+    // Ensures the menu is dismissed correctly when the window loses activation
+    PostMessageW(hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+
+    if cmd > 0 {
+        Some(cmd as usize - 1)
+    } else {
+        None
     }
 }
 
