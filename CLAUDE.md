@@ -162,7 +162,14 @@ config.sidebar = {
     pr_closed = "#d76a6a",
   },
 }
+
+config.agent_stop_sound = {
+  enabled = true,        -- play a sound when an agent goes idle; false to mute
+  sound = "Glass",       -- macOS system sound name (/System/Library/Sounds) or a file path
+}
 ```
+
+**Agent stop sound:** when an agent transitions to `idle` (OSC 7777 `status;idle`, emitted by the Stop hook), the GUI plays `config.agent_stop_sound` via `afplay`. Handled in the `Alert::WezmuxStatus` arm of `dispatch_notif()` (`wezterm-gui/src/termwindow/mod.rs`), gated on `window_contains_pane` so only the owning window plays. Config struct: `AgentStopSound` in `config/src/config.rs`.
 
 ## Environment variables
 

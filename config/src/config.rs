@@ -839,6 +839,12 @@ pub struct Config {
     #[dynamic(default)]
     pub audible_bell: AudibleBell,
 
+    /// Wezmux: play a sound when an agent stops working (goes idle).
+    /// Toggle from config.lua, e.g.
+    ///   config.agent_stop_sound = { enabled = true, sound = "Glass" }
+    #[dynamic(default)]
+    pub agent_stop_sound: AgentStopSound,
+
     #[dynamic(default)]
     pub canonicalize_pasted_newlines: Option<NewlineCanon>,
 
@@ -2082,6 +2088,44 @@ impl Default for Sidebar {
             visible: true,
             width: default_sidebar_width(),
             colors: SidebarColors::default(),
+        }
+    }
+}
+
+/// Wezmux: sound played when an agent stops working (transitions to idle).
+///
+/// `sound` is either a bare macOS system sound name (looked up under
+/// `/System/Library/Sounds/<name>.aiff`, e.g. "Glass", "Ping", "Submarine")
+/// or an absolute path to an audio file. Played via `afplay`.
+#[derive(FromDynamic, ToDynamic, Clone, Debug, PartialEq, Eq)]
+pub struct AgentStopSound {
+    #[dynamic(default = "default_true")]
+    pub enabled: bool,
+    #[dynamic(default = "default_agent_stop_sound")]
+    pub sound: String,
+}
+
+fn default_agent_stop_sound() -> String {
+    "Glass".to_string()
+}
+
+impl Default for AgentStopSound {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sound: default_agent_stop_sound(),
+        }
+    }
+}
+
+impl AgentStopSound {
+    /// Resolve `sound` to a playable file path. A bare name (no `/`) is
+    /// treated as a macOS system sound; anything else is used verbatim.
+    pub fn resolve_path(&self) -> String {
+        if self.sound.contains('/') {
+            self.sound.clone()
+        } else {
+            format!("/System/Library/Sounds/{}.aiff", self.sound)
         }
     }
 }
