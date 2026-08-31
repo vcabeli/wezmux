@@ -71,11 +71,12 @@ unrelated hooks, enables `[features].hooks` in `~/.codex/config.toml`, and can b
 run again safely after upgrades.
 
 Codex generates its short conversation name asynchronously after a thread is
-created. An asynchronous prompt hook watches for that title, and later
-tool/stop hooks refresh it. They read the generated `threads.name` for the
-hook's `session_id` from Codex's local state database and emit it as
-`OSC 7777;title`; the full first prompt in `threads.title` and the terminal tab
-title are not used for the card heading.
+created. A session-start hook immediately restores an existing title when a
+conversation is resumed, an asynchronous prompt hook watches for newly
+generated titles, and later tool/stop hooks refresh them. They read the
+generated `threads.name` for the hook's `session_id` from Codex's local state
+database and emit it as `OSC 7777;title`; the full first prompt in
+`threads.title` and the terminal tab title are not used for the card heading.
 
 ## Writing hooks for other agents
 

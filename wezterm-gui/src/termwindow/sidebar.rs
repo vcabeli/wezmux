@@ -1,7 +1,7 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
+use mux::Mux;
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -839,9 +839,7 @@ impl crate::TermWindow {
                 None => return,
             }
         };
-        self.sidebar
-            .workspace_configs
-            .set_emoji(&workspace, emoji);
+        self.sidebar.workspace_configs.set_emoji(&workspace, emoji);
         if let Err(e) = self.sidebar.workspace_configs.save() {
             log::error!("Failed to save workspace configs: {:#}", e);
         }
@@ -1092,10 +1090,7 @@ fn build_agent_info(
 
     let agent_type = agent_type?;
 
-    let subagent_count = pane_status
-        .as_ref()
-        .map(|s| s.subagent_count)
-        .unwrap_or(0);
+    let subagent_count = pane_status.as_ref().map(|s| s.subagent_count).unwrap_or(0);
     let background_tasks_count = pane_status
         .as_ref()
         .map(|s| s.background_tasks_count)
@@ -1119,16 +1114,14 @@ fn build_agent_info(
         // a generic status like "Claude is waiting for your input").
         let tool_fallback = pane_status.tool.as_ref().map(|t| format!("Running {t}..."));
         let msg = match status {
-            AgentStatus::Working => {
-                pane_status.message
-                    .or(pane_status.last_working_message)
-                    .or(tool_fallback)
-            }
-            _ => {
-                pane_status.last_working_message
-                    .or(pane_status.message)
-                    .or(tool_fallback)
-            }
+            AgentStatus::Working => pane_status
+                .message
+                .or(pane_status.last_working_message)
+                .or(tool_fallback),
+            _ => pane_status
+                .last_working_message
+                .or(pane_status.message)
+                .or(tool_fallback),
         };
         (status, msg)
     } else {

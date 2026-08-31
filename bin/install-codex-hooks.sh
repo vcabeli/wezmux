@@ -14,6 +14,7 @@ mkdir -p "$CODEX_DIR"
 HOOKS_JSON="$CODEX_DIR/hooks.json"
 
 # Our hook entries as JSON fragments
+WEZMUX_SESSION_START='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/update-title.sh --hook --once","timeout":5}]}'
 WEZMUX_PROMPT_SUBMIT='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-prompt-submit.sh","timeout":5},{"type":"command","command":"'"$HOOK_DIR"'/update-title.sh --hook","timeout":70,"async":true}]}'
 WEZMUX_STOP='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-stop.sh","timeout":5}]}'
 WEZMUX_PRE_TOOL='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-pre-tool-use.sh","timeout":5}]}'
@@ -33,6 +34,7 @@ if [ -f "$HOOKS_JSON" ] && [ -s "$HOOKS_JSON" ]; then
 
     # For each event type, filter out old wezmux entries then append ours
     MERGED=$(jq \
+        --argjson session "$WEZMUX_SESSION_START" \
         --argjson prompt "$WEZMUX_PROMPT_SUBMIT" \
         --argjson stop "$WEZMUX_STOP" \
         --argjson tool "$WEZMUX_PRE_TOOL" \
@@ -43,6 +45,7 @@ if [ -f "$HOOKS_JSON" ] && [ -s "$HOOKS_JSON" ]; then
                 (.hooks // []) | all(.command | test("wezmux|on-prompt-submit\\.sh|on-stop\\.sh|on-pre-tool-use\\.sh|update-title\\.sh") | not)
             ) ];
 
+        .hooks.SessionStart = ((.hooks.SessionStart // []) | remove_wezmux) + [$session] |
         .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | remove_wezmux) + [$prompt] |
         .hooks.Stop = ((.hooks.Stop // []) | remove_wezmux) + [$stop] |
         .hooks.PreToolUse = ((.hooks.PreToolUse // []) | remove_wezmux) + [$tool]
@@ -53,11 +56,13 @@ if [ -f "$HOOKS_JSON" ] && [ -s "$HOOKS_JSON" ]; then
 else
     # No existing hooks.json — create fresh
     jq -n \
+        --argjson session "$WEZMUX_SESSION_START" \
         --argjson prompt "$WEZMUX_PROMPT_SUBMIT" \
         --argjson stop "$WEZMUX_STOP" \
         --argjson tool "$WEZMUX_PRE_TOOL" \
         '{
             hooks: {
+                SessionStart: [$session],
                 UserPromptSubmit: [$prompt],
                 Stop: [$stop],
                 PreToolUse: [$tool]

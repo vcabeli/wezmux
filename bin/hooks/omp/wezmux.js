@@ -54,19 +54,22 @@ export default function wezmux(pi) {
 
   pi.on("session_start", () => emit("status", "idle"));
 
-  pi.on("input", () => {
+  pi.on("agent_start", () => {
     emit("status", "working");
     notify("Oh My Pi is working...");
   });
 
-  pi.on("agent_start", () => emit("status", "working"));
+  pi.on("tool_call", (event) => emit("tool", event.toolName));
 
-  pi.on("tool_call", (event) => {
-    emit("tool", event.toolName);
+  pi.on("tool_execution_start", (event) => {
     if (event.toolName === "ask") {
       emit("status", "needs_input");
       notify("Oh My Pi is waiting for your input");
     }
+  });
+
+  pi.on("tool_result", (event) => {
+    if (event.toolName === "ask") emit("status", "working");
   });
 
   pi.on("tool_approval_requested", () => {

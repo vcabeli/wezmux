@@ -14,7 +14,7 @@ if [ "$1" = "--hook" ]; then
         [ -n "$payload_thread_id" ] && thread_id="$payload_thread_id"
     fi
     tty_path="${WEZMUX_TTY:-/dev/tty}"
-    mode="--wait"
+    mode="${2:---wait}"
 else
     thread_id="$1"
     tty_path="${2:-${WEZMUX_TTY:-/dev/tty}}"
