@@ -21,8 +21,8 @@ pub fn ensure_zdotdir() -> anyhow::Result<PathBuf> {
     fs::create_dir_all(&dir)?;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
 
-    let original_zdotdir = std::env::var("ZDOTDIR")
-        .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_default());
+    let original_zdotdir =
+        std::env::var("ZDOTDIR").unwrap_or_else(|_| std::env::var("HOME").unwrap_or_default());
 
     write_zshenv(&dir, &original_zdotdir)?;
     write_zprofile(&dir, &original_zdotdir)?;

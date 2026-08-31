@@ -84,8 +84,7 @@ impl super::TermWindow {
             | UIItemType::WorkspaceEmojiCell(_)
             | UIItemType::WorkspaceEmojiReset
             | UIItemType::WorkspaceEmojiCancel
-            | UIItemType::WorkspaceEmojiBackground
-            => {
+            | UIItemType::WorkspaceEmojiBackground => {
                 self.sidebar.hovered_workspace = None;
             }
             UIItemType::CloseTab(_)
@@ -326,7 +325,9 @@ impl super::TermWindow {
         context: &dyn WindowOps,
     ) {
         let border = self.get_os_border();
-        let new_width = (event.coords.x as f32 - border.left.get() as f32).max(120.0).min(600.0);
+        let new_width = (event.coords.x as f32 - border.left.get() as f32)
+            .max(120.0)
+            .min(600.0);
         self.sidebar.override_width = Some(new_width);
         context.invalidate();
         if let Some(window) = self.window.as_ref().cloned() {
@@ -670,30 +671,66 @@ impl super::TermWindow {
 
         let color_items: Vec<NativeItem> = {
             let mut items = vec![
-                NativeItem::Entry { label: "Reset to Default".into(), tag: TAG_COLOR_RESET },
+                NativeItem::Entry {
+                    label: "Reset to Default".into(),
+                    tag: TAG_COLOR_RESET,
+                },
                 NativeItem::Separator,
             ];
             let swatches = [
-                ("Red", 101), ("Orange", 102), ("Yellow", 103), ("Green", 104),
-                ("Cyan", 105), ("Blue", 106), ("Purple", 107), ("Pink", 108),
+                ("Red", 101),
+                ("Orange", 102),
+                ("Yellow", 103),
+                ("Green", 104),
+                ("Cyan", 105),
+                ("Blue", 106),
+                ("Purple", 107),
+                ("Pink", 108),
             ];
             for (name, tag) in swatches {
-                items.push(NativeItem::Entry { label: name.into(), tag });
+                items.push(NativeItem::Entry {
+                    label: name.into(),
+                    tag,
+                });
             }
             items
         };
 
         let menu_items = vec![
-            NativeItem::Entry { label: "Rename…".into(), tag: TAG_RENAME },
-            NativeItem::SubMenu { label: "Workspace Color".into(), items: color_items },
-            NativeItem::Entry { label: "Workspace Emoji…".into(), tag: TAG_EMOJI_PICK },
+            NativeItem::Entry {
+                label: "Rename…".into(),
+                tag: TAG_RENAME,
+            },
+            NativeItem::SubMenu {
+                label: "Workspace Color".into(),
+                items: color_items,
+            },
+            NativeItem::Entry {
+                label: "Workspace Emoji…".into(),
+                tag: TAG_EMOJI_PICK,
+            },
             NativeItem::Separator,
-            NativeItem::Entry { label: "Move Up".into(), tag: TAG_MOVE_UP },
-            NativeItem::Entry { label: "Move Down".into(), tag: TAG_MOVE_DOWN },
-            NativeItem::Entry { label: "Move to Top".into(), tag: TAG_MOVE_TO_TOP },
-            NativeItem::Entry { label: "Move to Bottom".into(), tag: TAG_MOVE_TO_BOTTOM },
+            NativeItem::Entry {
+                label: "Move Up".into(),
+                tag: TAG_MOVE_UP,
+            },
+            NativeItem::Entry {
+                label: "Move Down".into(),
+                tag: TAG_MOVE_DOWN,
+            },
+            NativeItem::Entry {
+                label: "Move to Top".into(),
+                tag: TAG_MOVE_TO_TOP,
+            },
+            NativeItem::Entry {
+                label: "Move to Bottom".into(),
+                tag: TAG_MOVE_TO_BOTTOM,
+            },
             NativeItem::Separator,
-            NativeItem::Entry { label: "Close Workspace".into(), tag: TAG_CLOSE },
+            NativeItem::Entry {
+                label: "Close Workspace".into(),
+                tag: TAG_CLOSE,
+            },
         ];
 
         // Store which workspace this menu is for, so the notification handler can use it

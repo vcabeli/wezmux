@@ -50,10 +50,7 @@ pub enum OperatingSystemCommand {
     ResetColors(Vec<u8>),
     RxvtExtension(Vec<String>),
     ConEmuProgress(Progress),
-    WezmuxStatus {
-        event: String,
-        data: Option<String>,
-    },
+    WezmuxStatus { event: String, data: Option<String> },
 
     Unspecified(Vec<Vec<u8>>),
 }
@@ -387,7 +384,17 @@ impl OperatingSystemCommand {
                     .get(1)
                     .map(|s| String::from_utf8_lossy(s).to_string())
                     .unwrap_or_default();
-                let data = osc.get(2).map(|s| String::from_utf8_lossy(s).to_string());
+                let data = if osc.len() > 2 {
+                    Some(
+                        osc.iter()
+                            .skip(2)
+                            .map(|s| String::from_utf8_lossy(s))
+                            .collect::<Vec<_>>()
+                            .join(";"),
+                    )
+                } else {
+                    None
+                };
                 Ok(OperatingSystemCommand::WezmuxStatus { event, data })
             }
             FinalTermSemanticPrompt => self::FinalTermSemanticPrompt::parse(osc)
@@ -1491,6 +1498,20 @@ mod test {
         assert_eq!(
             parse(&["lhello"], "\x1b]lhello\x1b\\"),
             OperatingSystemCommand::SetWindowTitleSun("hello".into())
+        );
+    }
+
+    #[test]
+    fn wezmux_status_preserves_semicolons_in_data() {
+        assert_eq!(
+            parse(
+                &["7777", "title", "Fix auth", " update tests"],
+                "\x1b]7777;title;Fix auth; update tests\x1b\\"
+            ),
+            OperatingSystemCommand::WezmuxStatus {
+                event: "title".to_string(),
+                data: Some("Fix auth; update tests".to_string()),
+            }
         );
     }
 

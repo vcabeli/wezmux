@@ -111,6 +111,7 @@ pub enum AgentStatus {
 pub struct AgentInfo {
     pub agent_type: AgentType,
     pub display_name: String,
+    pub conversation_title: Option<String>,
     pub status: AgentStatus,
     pub status_message: Option<String>,
     /// Number of subagents running within this agent session.
@@ -1103,6 +1104,9 @@ fn build_agent_info(
         .as_ref()
         .map(|s| s.session_crons_count)
         .unwrap_or(0);
+    let conversation_title = pane_status
+        .as_ref()
+        .and_then(|s| s.conversation_title.clone());
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -1136,6 +1140,7 @@ fn build_agent_info(
     Some(AgentInfo {
         display_name: agent_type_display_name(agent_type),
         agent_type,
+        conversation_title,
         status,
         status_message,
         subagent_count,

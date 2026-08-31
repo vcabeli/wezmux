@@ -203,14 +203,23 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
 
 /// Title text for a card whose active pane runs an agent.
 ///
-/// Agents like Claude Code and Codex set the terminal title to a short
-/// generated task summary ("Figure 26b missing x axis"); prefer that over
-/// the static agent name. Falls back to the agent display name when the
-/// pane title is missing or generic (process name, workspace name, …).
+/// Codex supplies its generated conversation title through OSC 7777; its tab
+/// title is unrelated and must not leak into the card heading. Other agents
+/// use a short generated terminal title when available. Falls back to the
+/// agent display name when the relevant title is missing or generic.
 fn agent_card_title<'a>(
     entry: &'a WorkspaceEntry,
     agent: &'a crate::termwindow::sidebar::AgentInfo,
 ) -> &'a str {
+    if matches!(agent.agent_type, AgentType::Codex) {
+        return agent
+            .conversation_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&agent.display_name);
+    }
+
     let title = entry.title.trim();
 
     // Normalize agent-owned status prefixes only to decide whether a title is
@@ -1243,6 +1252,7 @@ mod test {
             agent: Some(AgentInfo {
                 agent_type: AgentType::ClaudeCode,
                 display_name: "Claude Code".to_string(),
+                conversation_title: None,
                 status: AgentStatus::Idle,
                 status_message: None,
                 subagent_count: 0,
@@ -1307,15 +1317,29 @@ mod test {
     }
 
     #[test]
-    fn agent_card_heading_does_not_duplicate_codex_status_glyph() {
-        let mut entry = agent_entry("\u{280B} Running cargo tests", Some("codex"));
+    fn codex_card_title_uses_conversation_title_instead_of_tab_title() {
+        let mut entry = agent_entry("codex — wezterm-gui", Some("codex"));
+        let agent = entry.agent.as_mut().unwrap();
+        agent.agent_type = AgentType::Codex;
+        agent.display_name = "Codex".to_string();
+        agent.conversation_title = Some("Use Codex conversation titles".to_string());
+
+        assert_eq!(
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            "Use Codex conversation titles"
+        );
+    }
+
+    #[test]
+    fn codex_card_title_does_not_fall_back_to_tab_title() {
+        let mut entry = agent_entry("codex — wezterm-gui", Some("codex"));
         let agent = entry.agent.as_mut().unwrap();
         agent.agent_type = AgentType::Codex;
         agent.display_name = "Codex".to_string();
 
         assert_eq!(
             agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
-            "\u{280B} Running cargo tests"
+            "\u{2731} Codex"
         );
     }
 
@@ -1339,6 +1363,7 @@ mod test {
             agent: Some(AgentInfo {
                 agent_type: AgentType::Codex,
                 display_name: "Codex".to_string(),
+                conversation_title: None,
                 status: AgentStatus::Working,
                 status_message: None,
                 subagent_count: 0,
