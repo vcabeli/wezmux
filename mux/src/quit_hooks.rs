@@ -1,5 +1,5 @@
-//! Graceful shutdown of AI-agent processes (claude, codex, cursor, opencode,
-//! aider) running inside panes.
+//! Graceful shutdown of AI-agent processes (claude, codex, omp, cursor,
+//! opencode, aider) running inside panes.
 //!
 //! Sending SIGTERM lets the agent print its "Resume this session with: ..."
 //! line, which is then captured by the saved scrollback so the conversation
@@ -21,6 +21,7 @@ fn is_agent_exe_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.contains("claude")
         || lower == "codex"
+        || lower == "omp"
         || lower.contains("cursor")
         || lower == "opencode"
         || lower == "aider"
@@ -123,4 +124,15 @@ pub fn graceful_kill_agents_in_workspace(mux: &Mux, workspace: &str) -> usize {
         panes.extend(panes_in_window(mux, window_id));
     }
     graceful_kill_agents_in_panes(&panes)
+}
+
+#[cfg(test)]
+mod test {
+    use super::is_agent_exe_name;
+
+    #[test]
+    fn recognizes_omp_as_an_agent_process() {
+        assert!(is_agent_exe_name("omp"));
+        assert!(!is_agent_exe_name("romp"));
+    }
 }

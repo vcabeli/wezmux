@@ -1,0 +1,30 @@
+#!/bin/bash
+# wezmux omp wrapper — injects the Oh My Pi status extension
+# Inside wezmux, this wrapper loads the bundled extension that emits OSC 7777
+# agent status and OSC 9 notifications. Outside wezmux it is a transparent
+# pass-through to the real omp binary.
+
+set -euo pipefail
+
+find_real_omp() {
+    local candidate
+    local IFS=':'
+    for dir in $PATH; do
+        candidate="$dir/omp"
+        if [ -x "$candidate" ] && [ ! "$candidate" -ef "$0" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    echo "wezmux: cannot find real 'omp' binary in PATH" >&2
+    exit 127
+}
+
+REAL_OMP="$(find_real_omp)"
+
+if [ -z "${WEZMUX:-}" ]; then
+    exec "$REAL_OMP" "$@"
+fi
+
+EXTENSION="$(cd "$(dirname "$0")" && pwd)/hooks/omp/wezmux.js"
+exec "$REAL_OMP" --extension "$EXTENSION" "$@"

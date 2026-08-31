@@ -294,10 +294,29 @@ impl GuiFrontEnd {
 
                 match action {
                     KeyAssignment::QuitApplication => {
-                        // If we get here, there are no windows that could have received
-                        // the QuitApplication command, therefore it must be ok to quit
-                        // immediately
-                        Connection::get().unwrap().terminate_message_loop();
+                        // Native macOS quit requests arrive here even while a
+                        // terminal window is open. Let that window run the
+                        // normal QuitApplication path so it can signal agents,
+                        // save the mux session, and honor close confirmation.
+                        let window = front_end().known_windows.borrow().keys().next().cloned();
+                        if let Some(window) = window {
+                            window.notify(TermWindowNotif::Apply(Box::new(|term_window| {
+                                if let Some(pane) = term_window.get_active_pane_or_overlay() {
+                                    if let Err(err) = term_window.perform_key_assignment(
+                                        &pane,
+                                        &KeyAssignment::QuitApplication,
+                                    ) {
+                                        log::error!(
+                                            "Failed to perform native QuitApplication: {err:#}"
+                                        );
+                                    }
+                                } else {
+                                    Connection::get().unwrap().terminate_message_loop();
+                                }
+                            })));
+                        } else {
+                            Connection::get().unwrap().terminate_message_loop();
+                        }
                     }
                     KeyAssignment::SpawnWindow => {
                         spawn_command(&SpawnCommand::default(), SpawnWhere::NewWindow);

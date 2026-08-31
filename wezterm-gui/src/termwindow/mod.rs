@@ -2857,20 +2857,21 @@ impl TermWindow {
                 let mux = Mux::get();
                 let config = &self.config;
 
-                // SIGTERM agents (claude, etc.) so they print their "Resume
-                // this session with: ..." line before we snapshot scrollback.
-                let killed = mux::quit_hooks::graceful_kill_all_agents(&mux);
-                if killed > 0 {
-                    log::info!("Signaled {killed} agent process(es) before quit");
-                }
-
-                // Save session before quitting — windows are still alive here
-                if let Err(err) = mux::session::save_session(&mux) {
-                    log::error!("Failed to save session: {:#}", err);
-                }
-
                 match config.window_close_confirmation {
                     WindowCloseConfirmation::NeverPrompt => {
+                        // SIGTERM agents (claude, etc.) so they print their
+                        // "Resume this session with: ..." line before we
+                        // snapshot scrollback.
+                        let killed = mux::quit_hooks::graceful_kill_all_agents(&mux);
+                        if killed > 0 {
+                            log::info!("Signaled {killed} agent process(es) before quit");
+                        }
+
+                        // Save while the mux windows are still alive.
+                        if let Err(err) = mux::session::save_session(&mux) {
+                            log::error!("Failed to save session: {:#}", err);
+                        }
+
                         let con = Connection::get().expect("call on gui thread");
                         con.terminate_message_loop();
                     }

@@ -959,7 +959,10 @@ impl WindowOps for Window {
                                 let sep = cocoa::appkit::NSMenuItem::separatorItem(nil);
                                 let () = msg_send![menu, addItem: sep];
                             }
-                            ContextMenuItem::SubMenu { label, items: sub_items } => {
+                            ContextMenuItem::SubMenu {
+                                label,
+                                items: sub_items,
+                            } => {
                                 let ns_item: id = msg_send![
                                     cocoa::appkit::NSMenuItem::alloc(nil),
                                     initWithTitle:*nsstring(label)
@@ -3309,8 +3312,7 @@ impl WindowView {
 
             cls.add_method(
                 sel!(weztermContextMenuAction:),
-                Self::wezterm_context_menu_action
-                    as extern "C" fn(&mut Object, Sel, *mut Object),
+                Self::wezterm_context_menu_action as extern "C" fn(&mut Object, Sel, *mut Object),
             );
 
             cls.add_method(

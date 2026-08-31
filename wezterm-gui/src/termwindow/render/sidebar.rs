@@ -13,7 +13,6 @@ use config::{Dimension, DimensionContext};
 use std::env;
 use std::path::Path;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 use wezterm_font::LoadedFont;
 use window::color::LinearRgba;
 
@@ -195,68 +194,85 @@ fn agent_type_icon(agent_type: AgentType) -> &'static str {
     match agent_type {
         AgentType::ClaudeCode => "\u{2733}", // ✳ eight spoked asterisk (matches Claude Code's own tab icon)
         AgentType::Codex => "\u{2731}",      // ✱ heavy asterisk
+        AgentType::Omp => "\u{03C0}",        // π for Oh My Pi
         AgentType::Cursor => "\u{2731}",     // ✱ heavy asterisk
         AgentType::Aider => "\u{2731}",      // ✱ heavy asterisk
         AgentType::OpenCode => "\u{2731}",   // ✱ heavy asterisk
     }
 }
 
-fn working_spinner_frame(milliseconds: u128) -> &'static str {
-    const FRAMES: [&str; 10] = [
-        "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
-        "\u{2827}", "\u{2807}", "\u{280F}",
-    ];
-    FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize]
-}
-
-fn sidebar_agent_title_icon(
-    agent: &crate::termwindow::sidebar::AgentInfo,
-    milliseconds: u128,
-) -> &'static str {
-    if matches!(agent.status, AgentStatus::Working) {
-        working_spinner_frame(milliseconds)
-    } else {
-        agent_type_icon(agent.agent_type)
-    }
-}
-
 /// Title text for a card whose active pane runs an agent.
 ///
-/// Agents like Claude Code and Codex set the terminal title to a short
-/// generated task summary ("Figure 26b missing x axis"); prefer that over
-/// the static agent name. Falls back to the agent display name when the
-/// pane title is missing or generic (process name, workspace name, …).
+/// Codex supplies its generated conversation title through OSC 7777; its tab
+/// title is unrelated and must not leak into the card heading. Other agents
+/// use a short generated terminal title when available. Falls back to the
+/// agent display name when the relevant title is missing or generic.
 fn agent_card_title<'a>(
     entry: &'a WorkspaceEntry,
     agent: &'a crate::termwindow::sidebar::AgentInfo,
 ) -> &'a str {
-    // Strip the leading status glyph agents embed in their titles
-    // (e.g. Claude Code's "✳ summary"); the sidebar renders its own
-    // animated icon in front of the title.
-    let title = entry
-        .title
-        .trim()
+    if matches!(agent.agent_type, AgentType::Codex) {
+        return agent
+            .conversation_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&agent.display_name);
+    }
+
+    let title = entry.title.trim();
+
+    // Normalize agent-owned status prefixes only to decide whether a title is
+    // generic. A useful title is returned verbatim: its own live status glyph
+    // is more accurate than a second animation synthesized by the sidebar.
+    let summary = title
         .trim_start_matches([
             '\u{2733}', '\u{2731}', '\u{273B}', '\u{2736}', '\u{00B7}', '*',
         ])
         .trim_start();
+    let summary = if matches!(agent.agent_type, AgentType::Omp) {
+        summary
+            .strip_prefix('\u{03C0}')
+            .map(|rest| {
+                rest.trim_start()
+                    .trim_start_matches(|ch| {
+                        matches!(ch, '>' | '!' | ':') || ('\u{2800}'..='\u{28FF}').contains(&ch)
+                    })
+                    .trim_start()
+            })
+            .unwrap_or(summary)
+    } else {
+        summary
+    };
 
-    let generic = title.is_empty()
-        || title == entry.name
-        || title.eq_ignore_ascii_case("wezterm")
-        || title.eq_ignore_ascii_case(&agent.display_name)
+    let generic = summary.is_empty()
+        || summary == entry.name
+        || summary.eq_ignore_ascii_case("wezterm")
+        || summary.eq_ignore_ascii_case(&agent.display_name)
         || entry
             .foreground_process_name
             .as_deref()
-            .is_some_and(|name| title.eq_ignore_ascii_case(name))
+            .is_some_and(|name| summary.eq_ignore_ascii_case(name))
         // Single-word titles are the process-name fallback from
         // sidebar_title_from_pane ("claude", "node"), not generated
         // summaries, which are always short phrases.
-        || !title.contains(' ');
+        || !summary.contains(' ');
     if generic {
         &agent.display_name
     } else {
         title
+    }
+}
+
+fn agent_card_heading(
+    entry: &WorkspaceEntry,
+    agent: &crate::termwindow::sidebar::AgentInfo,
+) -> String {
+    let title = agent_card_title(entry, agent);
+    if title == agent.display_name {
+        format!("{} {}", agent_type_icon(agent.agent_type), title)
+    } else {
+        title.to_string()
     }
 }
 
@@ -430,7 +446,6 @@ fn build_card_element(
     mono_cols: usize,
     card_width: f32,
     theme: &SidebarTheme,
-    milliseconds: u128,
 ) -> Element {
     let is_active = entry.is_active;
     let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
@@ -481,12 +496,8 @@ fn build_card_element(
     }
 
     // Title line (with optional unread badge prefix and nerd font icon)
-    let base_title = if let Some(ref agent) = entry.agent {
-        format!(
-            "{} {}",
-            sidebar_agent_title_icon(agent, milliseconds),
-            agent_card_title(entry, agent)
-        )
+    let base_title = if let Some(agent) = &entry.agent {
+        agent_card_heading(entry, agent)
     } else if let Some(icon) = entry
         .foreground_process_name
         .as_deref()
@@ -798,12 +809,6 @@ impl crate::TermWindow {
 
         // Workspace cards
         let entries = self.sidebar_entries();
-        let milliseconds = self.created.elapsed().as_millis();
-        if entries.iter().any(|entry| {
-            entry.agent.as_ref().map(|agent| agent.status) == Some(AgentStatus::Working)
-        }) {
-            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
-        }
         for entry in &entries {
             root_children.push(build_card_element(
                 &font,
@@ -814,7 +819,6 @@ impl crate::TermWindow {
                 mono_cols,
                 content_width,
                 &theme,
-                milliseconds,
             ));
         }
 
@@ -1046,8 +1050,9 @@ fn sidebar_pull_request_color(
 #[cfg(test)]
 mod test {
     use super::{
-        agent_card_title, format_listening_ports, hex_to_linear, sidebar_entry_body_lines,
-        sidebar_pull_request_text, tint_linear, wrap_text_to_cells, SidebarLine, SidebarLineStyle,
+        agent_card_heading, agent_card_title, agent_type_icon, format_listening_ports,
+        hex_to_linear, sidebar_entry_body_lines, sidebar_pull_request_text, tint_linear,
+        wrap_text_to_cells, SidebarLine, SidebarLineStyle,
     };
     use crate::termwindow::sidebar::{
         AgentInfo, AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest,
@@ -1247,6 +1252,7 @@ mod test {
             agent: Some(AgentInfo {
                 agent_type: AgentType::ClaudeCode,
                 display_name: "Claude Code".to_string(),
+                conversation_title: None,
                 status: AgentStatus::Idle,
                 status_message: None,
                 subagent_count: 0,
@@ -1261,11 +1267,13 @@ mod test {
     }
 
     #[test]
-    fn agent_card_title_prefers_generated_tab_title() {
+    fn agent_card_title_preserves_generated_tab_title() {
         let entry = agent_entry("\u{2733} Figure 26b missing x axis", Some("node"));
         let agent = entry.agent.as_ref().unwrap();
-        // Leading status glyph is stripped; the summary itself is kept.
-        assert_eq!(agent_card_title(&entry, agent), "Figure 26b missing x axis");
+        assert_eq!(
+            agent_card_heading(&entry, agent),
+            "\u{2733} Figure 26b missing x axis"
+        );
     }
 
     #[test]
@@ -1288,6 +1296,52 @@ mod test {
             );
         }
     }
+    #[test]
+    fn agent_card_title_preserves_omp_run_state_prefix() {
+        for title in [
+            "\u{03C0} > Create PR follow-up",
+            "\u{03C0} \u{280B} Create PR follow-up",
+            "\u{03C0} ! Create PR follow-up",
+            "\u{03C0}: Create PR follow-up",
+        ] {
+            let mut entry = agent_entry(title, Some("omp"));
+            let agent = entry.agent.as_mut().unwrap();
+            agent.agent_type = AgentType::Omp;
+            agent.display_name = "Oh My Pi".to_string();
+
+            assert_eq!(
+                agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+                title
+            );
+        }
+    }
+
+    #[test]
+    fn codex_card_title_uses_conversation_title_instead_of_tab_title() {
+        let mut entry = agent_entry("codex — wezterm-gui", Some("codex"));
+        let agent = entry.agent.as_mut().unwrap();
+        agent.agent_type = AgentType::Codex;
+        agent.display_name = "Codex".to_string();
+        agent.conversation_title = Some("Use Codex conversation titles".to_string());
+
+        assert_eq!(
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            "Use Codex conversation titles"
+        );
+    }
+
+    #[test]
+    fn codex_card_title_does_not_fall_back_to_tab_title() {
+        let mut entry = agent_entry("codex — wezterm-gui", Some("codex"));
+        let agent = entry.agent.as_mut().unwrap();
+        agent.agent_type = AgentType::Codex;
+        agent.display_name = "Codex".to_string();
+
+        assert_eq!(
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            "\u{2731} Codex"
+        );
+    }
 
     #[test]
     fn agent_card_falls_back_to_notification_preview() {
@@ -1309,6 +1363,7 @@ mod test {
             agent: Some(AgentInfo {
                 agent_type: AgentType::Codex,
                 display_name: "Codex".to_string(),
+                conversation_title: None,
                 status: AgentStatus::Working,
                 status_message: None,
                 subagent_count: 0,
@@ -1338,5 +1393,9 @@ mod test {
                 }
             ]
         );
+    }
+    #[test]
+    fn omp_uses_pi_agent_icon() {
+        assert_eq!(agent_type_icon(AgentType::Omp), "\u{03C0}");
     }
 }
