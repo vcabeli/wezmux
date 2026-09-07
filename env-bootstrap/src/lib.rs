@@ -46,8 +46,7 @@ pub fn fixup_macos_app_path() {
     {
         if output.status.success() {
             let shell_path = String::from_utf8_lossy(&output.stdout);
-            let current_dirs: std::collections::HashSet<&str> =
-                current_path.split(':').collect();
+            let current_dirs: std::collections::HashSet<&str> = current_path.split(':').collect();
             let mut paths: Vec<&str> = current_path.split(':').collect();
 
             // Append any directories from the login shell that we're missing

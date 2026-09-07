@@ -530,6 +530,18 @@ impl Pane for LocalPane {
         }
     }
 
+    fn is_tty_in_raw_mode(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use nix::sys::termios::LocalFlags;
+            return self.pty.lock().get_termios().is_some_and(|tio| {
+                !tio.local_flags.intersects(LocalFlags::ICANON | LocalFlags::ISIG)
+            });
+        }
+        #[cfg(not(unix))]
+        false
+    }
+
     fn get_foreground_process_info(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
         #[cfg(unix)]
         {

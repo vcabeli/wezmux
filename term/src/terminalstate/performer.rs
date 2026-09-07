@@ -911,7 +911,10 @@ impl<'a> Performer<'a> {
             ) => {}
 
             OperatingSystemCommand::SystemNotification(message) => {
-                log::info!("OSC 9 SystemNotification received: {:?}", &message[..message.len().min(100)]);
+                log::info!(
+                    "OSC 9 SystemNotification received: {:?}",
+                    &message[..message.len().min(100)]
+                );
                 if let Some(handler) = self.alert_handler.as_mut() {
                     handler.alert(Alert::ToastNotification {
                         title: None,
@@ -919,7 +922,10 @@ impl<'a> Performer<'a> {
                         focus: true,
                     });
                 } else {
-                    log::info!("Application sends SystemNotification (no handler): {}", message);
+                    log::info!(
+                        "Application sends SystemNotification (no handler): {}",
+                        message
+                    );
                 }
             }
             OperatingSystemCommand::RxvtExtension(params) => {

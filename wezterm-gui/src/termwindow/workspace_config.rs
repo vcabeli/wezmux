@@ -140,9 +140,7 @@ impl WorkspaceConfigs {
 
     /// Get emoji for workspace, if any.
     pub fn emoji(&self, workspace: &str) -> Option<String> {
-        self.workspaces
-            .get(workspace)
-            .and_then(|c| c.emoji.clone())
+        self.workspaces.get(workspace).and_then(|c| c.emoji.clone())
     }
 
     /// Set emoji for workspace. Empty/whitespace-only or oversize strings are treated as None.
@@ -157,10 +155,7 @@ impl WorkspaceConfigs {
             },
             None => None,
         };
-        let entry = self
-            .workspaces
-            .entry(workspace.to_string())
-            .or_default();
+        let entry = self.workspaces.entry(workspace.to_string()).or_default();
         entry.emoji = cleaned;
         self.prune_empty_workspace(workspace);
     }
@@ -177,10 +172,7 @@ impl WorkspaceConfigs {
                 return;
             }
         }
-        let entry = self
-            .workspaces
-            .entry(workspace.to_string())
-            .or_default();
+        let entry = self.workspaces.entry(workspace.to_string()).or_default();
         entry.accent_color = color;
         self.prune_empty_workspace(workspace);
     }
@@ -257,8 +249,7 @@ impl WorkspaceConfigs {
     /// Stale entries (not in all_workspaces) are removed.
     fn ensure_full_order(&mut self, all_workspaces: &[String]) {
         // Remove stale entries
-        self.workspace_order
-            .retain(|n| all_workspaces.contains(n));
+        self.workspace_order.retain(|n| all_workspaces.contains(n));
 
         // Append missing workspaces
         for name in all_workspaces {
@@ -270,9 +261,7 @@ impl WorkspaceConfigs {
 
     fn prune_empty_workspace(&mut self, workspace: &str) {
         let remove = self.workspaces.get(workspace).is_some_and(|entry| {
-            entry.display_name.is_none()
-                && entry.accent_color.is_none()
-                && entry.emoji.is_none()
+            entry.display_name.is_none() && entry.accent_color.is_none() && entry.emoji.is_none()
         });
         if remove {
             self.workspaces.remove(workspace);
@@ -332,13 +321,11 @@ mod tests {
         configs.set_accent_color("ws", Some("red".to_string()));
         assert_eq!(configs.accent_color("ws"), None);
         // The entry should not have been set at all
-        assert!(
-            configs
-                .workspaces
-                .get("ws")
-                .and_then(|c| c.accent_color.as_ref())
-                .is_none()
-        );
+        assert!(configs
+            .workspaces
+            .get("ws")
+            .and_then(|c| c.accent_color.as_ref())
+            .is_none());
     }
 
     #[test]
@@ -461,10 +448,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&configs).unwrap();
         let restored: WorkspaceConfigs = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(
-            restored.display_name("project-a"),
-            "Project Alpha"
-        );
+        assert_eq!(restored.display_name("project-a"), "Project Alpha");
         assert_eq!(
             restored.accent_color("project-a"),
             Some("#ff6b6b".to_string())

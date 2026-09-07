@@ -366,10 +366,7 @@ pub struct ContextMenuNotification(pub usize);
 #[derive(Clone, Debug)]
 pub enum ContextMenuItem {
     /// A clickable menu item with label and an opaque tag.
-    Entry {
-        label: String,
-        tag: usize,
-    },
+    Entry { label: String, tag: usize },
     /// A separator line.
     Separator,
     /// A submenu with label and child items.

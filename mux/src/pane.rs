@@ -344,6 +344,12 @@ pub trait Pane: Downcast + Send + Sync {
         None
     }
 
+    /// Whether the local TTY delivers control characters as input instead of
+    /// interpreting them as signals or EOF. False when unavailable.
+    fn is_tty_in_raw_mode(&self) -> bool {
+        false
+    }
+
     fn exit_behavior(&self) -> Option<ExitBehavior> {
         None
     }

@@ -12,6 +12,9 @@ pub enum AgentStatus {
 #[derive(Debug, Clone)]
 pub struct AgentPaneStatus {
     pub status: AgentStatus,
+    /// Agent-owned conversation title, when the integration can provide one.
+    /// This is deliberately separate from the terminal tab title.
+    pub conversation_title: Option<String>,
     pub message: Option<String>,
     pub tool: Option<String>,
     /// The last message received while the agent was in Working state.
@@ -54,6 +57,7 @@ impl AgentStatusStore {
             .entry(pane_id)
             .or_insert_with(|| AgentPaneStatus {
                 status: default_status,
+                conversation_title: None,
                 message: None,
                 tool: None,
                 last_working_message: None,
@@ -130,6 +134,16 @@ impl AgentStatusStore {
         let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Working);
         let changed = is_new || entry.message.as_deref() != Some(message.as_str());
         entry.message = Some(message);
+        entry.updated = Instant::now();
+        if changed {
+            self.generation += 1;
+        }
+    }
+
+    pub fn update_conversation_title(&mut self, pane_id: PaneId, title: String) {
+        let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Working);
+        let changed = is_new || entry.conversation_title.as_deref() != Some(title.as_str());
+        entry.conversation_title = Some(title);
         entry.updated = Instant::now();
         if changed {
             self.generation += 1;
@@ -232,10 +246,15 @@ mod test {
     fn update_message_and_tool() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
+        store.update_conversation_title(1, "Fix sidebar titles".to_string());
         store.update_message(1, "Refactoring auth".to_string());
         store.update_tool(1, "Edit".to_string());
 
         let status = store.get(1).unwrap();
+        assert_eq!(
+            status.conversation_title.as_deref(),
+            Some("Fix sidebar titles")
+        );
         assert_eq!(status.message.as_deref(), Some("Refactoring auth"));
         assert_eq!(status.tool.as_deref(), Some("Edit"));
     }
@@ -311,6 +330,7 @@ mod test {
         // this constantly: a Stop hook reports session_crons/background_tasks
         // every time, and consecutive Bash calls report the same tool.
         store.update_status(1, AgentStatus::Working);
+        store.update_conversation_title(1, "same title".to_string());
         store.update_message(1, "same".to_string());
         store.update_tool(1, "Bash".to_string());
         store.update_subagent_count(1, 2);
@@ -321,6 +341,7 @@ mod test {
 
         for _ in 0..5 {
             store.update_status(1, AgentStatus::Working);
+            store.update_conversation_title(1, "same title".to_string());
             store.update_message(1, "same".to_string());
             store.update_tool(1, "Bash".to_string());
             store.update_subagent_count(1, 2);
@@ -337,6 +358,7 @@ mod test {
         // ...but the values are still there.
         let status = store.get(1).unwrap();
         assert_eq!(status.message.as_deref(), Some("same"));
+        assert_eq!(status.conversation_title.as_deref(), Some("same title"));
         assert_eq!(status.tool.as_deref(), Some("Bash"));
         assert_eq!(status.subagent_count, 2);
         assert_eq!(status.background_tasks_count, 4);
@@ -347,6 +369,7 @@ mod test {
     fn each_field_change_bumps_generation() {
         let mut store = AgentStatusStore::default();
         store.update_status(1, AgentStatus::Working);
+        store.update_conversation_title(1, "a title".to_string());
         store.update_message(1, "a".to_string());
         store.update_tool(1, "Bash".to_string());
         store.update_subagent_count(1, 1);
@@ -356,6 +379,12 @@ mod test {
         // Each of these is a real change and must be visible to the sidebar.
         let mut prev = store.generation();
         for (label, apply) in [
+            (
+                "conversation title",
+                Box::new(|s: &mut AgentStatusStore| {
+                    s.update_conversation_title(1, "another title".to_string())
+                }) as Box<dyn Fn(&mut AgentStatusStore)>,
+            ),
             (
                 "message",
                 Box::new(|s: &mut AgentStatusStore| s.update_message(1, "b".to_string()))
@@ -385,7 +414,8 @@ mod test {
             apply(&mut store);
             assert!(
                 store.generation() > prev,
-                "changing {label} should bump the generation"
+                "changing {} should bump the generation",
+                label
             );
             prev = store.generation();
         }
@@ -515,10 +545,7 @@ mod test {
         // message is cleared (stale status label like "Claude finished")
         assert!(status.message.is_none());
         // last_working_message is preserved as fallback preview
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("old output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("old output"));
     }
 
     #[test]
@@ -634,10 +661,7 @@ mod test {
 
         let status = store.get(1).unwrap();
         // lwm is now "new output", not "old output"
-        assert_eq!(
-            status.last_working_message.as_deref(),
-            Some("new output")
-        );
+        assert_eq!(status.last_working_message.as_deref(), Some("new output"));
     }
 
     #[test]

@@ -306,7 +306,9 @@ impl crate::TermWindow {
             let pane_id = pos.pane.pane_id();
             if mux.pane_has_unread_notifications(pane_id) && !pos.is_active {
                 let x = padding_left + border.left.get() as f32 + pos.left as f32 * cell_width;
-                let y = padding_top + border.top.get() as f32 + top_bar_height
+                let y = padding_top
+                    + border.top.get() as f32
+                    + top_bar_height
                     + pos.top as f32 * cell_height;
                 let w = pos.pixel_width as f32;
                 let h = pos.pixel_height as f32;
@@ -315,26 +317,20 @@ impl crate::TermWindow {
                 // Ring drawn at exact pane boundaries (no inset)
                 // Horizontal edges span full width, vertical edges fit between them
                 // Top
-                self.filled_rectangle(
-                    layers, 2,
-                    euclid::rect(x, y, w, t),
-                    ring_color,
-                )?;
+                self.filled_rectangle(layers, 2, euclid::rect(x, y, w, t), ring_color)?;
                 // Bottom
-                self.filled_rectangle(
-                    layers, 2,
-                    euclid::rect(x, y + h - t, w, t),
-                    ring_color,
-                )?;
+                self.filled_rectangle(layers, 2, euclid::rect(x, y + h - t, w, t), ring_color)?;
                 // Left
                 self.filled_rectangle(
-                    layers, 2,
+                    layers,
+                    2,
                     euclid::rect(x, y + t, t, h - t * 2.0),
                     ring_color,
                 )?;
                 // Right
                 self.filled_rectangle(
-                    layers, 2,
+                    layers,
+                    2,
                     euclid::rect(x + w - t, y + t, t, h - t * 2.0),
                     ring_color,
                 )?;

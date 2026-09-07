@@ -1,7 +1,7 @@
 use config::{ConfigHandle, DimensionContext, TermConfig};
 use git2::{Repository, StatusOptions};
-use mux::Mux;
 use mux::pane::{CachePolicy, PaneId};
+use mux::Mux;
 use promise::spawn::{spawn, spawn_into_new_thread};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -93,6 +93,7 @@ pub struct WorkspacePullRequest {
 pub enum AgentType {
     ClaudeCode,
     Codex,
+    Omp,
     Cursor,
     OpenCode,
     Aider,
@@ -110,6 +111,7 @@ pub enum AgentStatus {
 pub struct AgentInfo {
     pub agent_type: AgentType,
     pub display_name: String,
+    pub conversation_title: Option<String>,
     pub status: AgentStatus,
     pub status_message: Option<String>,
     /// Number of subagents running within this agent session.
@@ -837,9 +839,7 @@ impl crate::TermWindow {
                 None => return,
             }
         };
-        self.sidebar
-            .workspace_configs
-            .set_emoji(&workspace, emoji);
+        self.sidebar.workspace_configs.set_emoji(&workspace, emoji);
         if let Err(e) = self.sidebar.workspace_configs.save() {
             log::error!("Failed to save workspace configs: {:#}", e);
         }
@@ -1026,14 +1026,24 @@ impl crate::TermWindow {
 }
 
 fn detect_agent_type(info: &LocalProcessInfo) -> Option<AgentType> {
-    let exe_names = info.flatten_to_exe_names();
-    for name in &exe_names {
-        let lower = name.to_lowercase();
+    detect_agent_type_from_names(info.flatten_to_exe_names())
+}
+
+fn detect_agent_type_from_names<I, S>(exe_names: I) -> Option<AgentType>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for name in exe_names {
+        let lower = name.as_ref().to_lowercase();
         if lower.contains("claude") {
             return Some(AgentType::ClaudeCode);
         }
         if lower == "codex" {
             return Some(AgentType::Codex);
+        }
+        if lower == "omp" {
+            return Some(AgentType::Omp);
         }
         if lower.contains("cursor") {
             return Some(AgentType::Cursor);
@@ -1052,6 +1062,7 @@ fn agent_type_display_name(agent_type: AgentType) -> String {
     match agent_type {
         AgentType::ClaudeCode => "Claude Code".to_string(),
         AgentType::Codex => "Codex".to_string(),
+        AgentType::Omp => "Oh My Pi".to_string(),
         AgentType::Cursor => "Cursor".to_string(),
         AgentType::OpenCode => "OpenCode".to_string(),
         AgentType::Aider => "Aider".to_string(),
@@ -1079,10 +1090,7 @@ fn build_agent_info(
 
     let agent_type = agent_type?;
 
-    let subagent_count = pane_status
-        .as_ref()
-        .map(|s| s.subagent_count)
-        .unwrap_or(0);
+    let subagent_count = pane_status.as_ref().map(|s| s.subagent_count).unwrap_or(0);
     let background_tasks_count = pane_status
         .as_ref()
         .map(|s| s.background_tasks_count)
@@ -1091,6 +1099,9 @@ fn build_agent_info(
         .as_ref()
         .map(|s| s.session_crons_count)
         .unwrap_or(0);
+    let conversation_title = pane_status
+        .as_ref()
+        .and_then(|s| s.conversation_title.clone());
 
     let (status, status_message) = if let Some(pane_status) = pane_status {
         let status = match pane_status.status {
@@ -1103,16 +1114,14 @@ fn build_agent_info(
         // a generic status like "Claude is waiting for your input").
         let tool_fallback = pane_status.tool.as_ref().map(|t| format!("Running {t}..."));
         let msg = match status {
-            AgentStatus::Working => {
-                pane_status.message
-                    .or(pane_status.last_working_message)
-                    .or(tool_fallback)
-            }
-            _ => {
-                pane_status.last_working_message
-                    .or(pane_status.message)
-                    .or(tool_fallback)
-            }
+            AgentStatus::Working => pane_status
+                .message
+                .or(pane_status.last_working_message)
+                .or(tool_fallback),
+            _ => pane_status
+                .last_working_message
+                .or(pane_status.message)
+                .or(tool_fallback),
         };
         (status, msg)
     } else {
@@ -1124,6 +1133,7 @@ fn build_agent_info(
     Some(AgentInfo {
         display_name: agent_type_display_name(agent_type),
         agent_type,
+        conversation_title,
         status,
         status_message,
         subagent_count,
@@ -1500,8 +1510,8 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 #[cfg(test)]
 mod test {
     use super::{
+        detect_agent_type_from_names, parse_listening_ports, parse_pull_request, AgentType,
         SidebarState, WorkspacePullRequest, WorkspacePullRequestStatus,
-        parse_listening_ports, parse_pull_request,
     };
     use std::time::Duration;
 
@@ -1548,4 +1558,9 @@ n*:3000\n";
         );
     }
 
+    #[test]
+    fn detects_omp_as_an_agent_process() {
+        assert_eq!(detect_agent_type_from_names(["omp"]), Some(AgentType::Omp));
+        assert_eq!(detect_agent_type_from_names(["romp"]), None);
+    }
 }

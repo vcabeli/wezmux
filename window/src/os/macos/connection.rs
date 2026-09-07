@@ -292,8 +292,7 @@ impl ConnectionOps for Connection {
                 true
             } else {
                 let () = msg_send![self.ns_app, unhide: self.ns_app];
-                current_app
-                    .activateWithOptions_(NSApplicationActivateIgnoringOtherApps);
+                current_app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps);
                 false
             }
         }

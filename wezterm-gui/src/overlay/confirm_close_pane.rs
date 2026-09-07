@@ -78,7 +78,7 @@ pub fn confirm_quit_program(
 ) -> anyhow::Result<()> {
     if confirm::run_confirmation("🛑 Really Quit Wezmux?", &mut term)? {
         promise::spawn::spawn_into_main_thread(async move {
-            // SIGTERM agents (claude, etc.) so their "Resume this session
+            // Request agent exits so their "Resume this session
             // with: ..." line lands in scrollback before we save it.
             if let Some(mux) = mux::Mux::try_get() {
                 mux::quit_hooks::graceful_kill_all_agents(&mux);
