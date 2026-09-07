@@ -70,13 +70,18 @@ The installer merges Wezmux entries into `~/.codex/hooks.json`, preserves
 unrelated hooks, enables `[features].hooks` in `~/.codex/config.toml`, and can be
 run again safely after upgrades.
 
-Codex generates its short conversation name asynchronously after a thread is
-created. A session-start hook immediately restores an existing title when a
-conversation is resumed, an asynchronous prompt hook watches for newly
-generated titles, and later tool/stop hooks refresh them. They read the
-generated `threads.name` for the hook's `session_id` from Codex's local state
-database and emit it as `OSC 7777;title`; the full first prompt in
-`threads.title` and the terminal tab title are not used for the card heading.
+Codex doesn't always generate a short conversation name. The title hook uses
+`threads.name` when available, otherwise a preview of the saved first prompt
+in `threads.title`. On a new thread, it can use the `UserPromptSubmit` payload
+immediately, before Codex has saved the prompt. Titles have terminal controls
+removed, whitespace collapsed, and are limited to 80 characters.
+
+A session-start hook restores the title when a conversation is resumed. An
+asynchronous prompt hook emits the fallback immediately and watches for a
+short name for up to 60 seconds; later tool/stop hooks also refresh it. Once
+saved, the first prompt takes precedence over follow-up prompts, keeping the
+heading stable. Hooks identify the conversation by `session_id` and emit
+`OSC 7777;title` directly to the card, independently of the terminal tab title.
 
 ## Writing hooks for other agents
 
