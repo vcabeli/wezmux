@@ -89,6 +89,10 @@ pub mod workspace_emoji_picker;
 use crate::spawn::SpawnWhere;
 use prevcursor::PrevCursorPos;
 
+/// How long title updates are held so that a burst of title, icon and
+/// progress alerts from several panes costs one tab bar rebuild.
+const TITLE_UPDATE_COALESCE_DELAY: Duration = Duration::from_millis(50);
+
 const ATLAS_SIZE: usize = 128;
 
 lazy_static::lazy_static! {
@@ -459,6 +463,11 @@ pub struct TermWindow {
     line_quad_cache: RefCell<LfuCache<LineQuadCacheKey, LineQuadCacheValue>>,
 
     last_status_call: Instant,
+    /// A title update is scheduled to run after `TITLE_UPDATE_COALESCE_DELAY`;
+    /// requests made until then fold into it.
+    title_update_pending: bool,
+    /// The pending title update should also emit the status events.
+    title_update_emits_status: bool,
     cursor_blink_state: RefCell<ColorEase>,
     blink_state: RefCell<ColorEase>,
     rapid_blink_state: RefCell<ColorEase>,
@@ -793,6 +802,8 @@ impl TermWindow {
                 &config,
             )),
             last_status_call: Instant::now(),
+            title_update_pending: false,
+            title_update_emits_status: false,
             cursor_blink_state: RefCell::new(ColorEase::new(
                 config.cursor_blink_rate,
                 config.cursor_blink_ease_in,
@@ -1958,8 +1969,43 @@ impl TermWindow {
     /// Called by various bits of code to update the title bar.
     /// Let's also trigger the status event so that it can choose
     /// to update the right-status.
+    /// Refresh the window title, tab bar and status, coalescing bursts.
+    ///
+    /// Every title, icon or progress change in any pane lands here, and a
+    /// working agent animates its title several times a second.  Rebuilding
+    /// the tab bar state runs the `format-tab-title` Lua callback per tab, so
+    /// doing it once per alert let a few agents monopolise the main thread,
+    /// and while the window was hidden the backlog grew until the next show
+    /// had to drain seconds of stale title work first.
     fn update_title(&mut self) {
-        self.schedule_status_update();
+        self.title_update_emits_status = true;
+        self.request_title_update();
+    }
+
+    fn request_title_update(&mut self) {
+        if self.title_update_pending {
+            return;
+        }
+        let Some(window) = self.window.clone() else {
+            // No window yet to defer through; this is early setup.
+            self.flush_title_update();
+            return;
+        };
+        self.title_update_pending = true;
+        promise::spawn::spawn(async move {
+            Timer::after(TITLE_UPDATE_COALESCE_DELAY).await;
+            window.notify(TermWindowNotif::Apply(Box::new(|term_window| {
+                term_window.flush_title_update();
+            })));
+        })
+        .detach();
+    }
+
+    fn flush_title_update(&mut self) {
+        self.title_update_pending = false;
+        if std::mem::take(&mut self.title_update_emits_status) {
+            self.schedule_status_update();
+        }
         self.update_title_impl();
     }
 
@@ -2020,7 +2066,7 @@ impl TermWindow {
     /// Called by window:set_right_status after the status has
     /// been updated; let's update the bar
     pub fn update_title_post_status(&mut self) {
-        self.update_title_impl();
+        self.request_title_update();
     }
 
     fn update_title_impl(&mut self) {
