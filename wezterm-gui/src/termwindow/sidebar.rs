@@ -118,6 +118,21 @@ impl GitStatusCheck {
     }
 }
 
+/// Everything a refresh learns from a workspace's repository.
+///
+/// Computed once per repository per refresh and shared by every workspace
+/// whose cwd resolves to it: a dozen workspaces open on one monorepo must
+/// cost one repository open and one status scan, not one each.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct GitFacts {
+    branch: Option<String>,
+    dirty: bool,
+    status_checked: Option<GitStatusCheck>,
+    pull_request: Option<WorkspacePullRequest>,
+    pull_request_checked_for_branch: Option<String>,
+    pull_request_checked_at: Option<Instant>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspacePullRequestStatus {
     Open,
@@ -1305,6 +1320,9 @@ fn collect_sidebar_metadata(
     let pane_facts = resolve_pane_process_facts(&request.pane_leaders);
 
     let mut metadata = HashMap::new();
+    // Keyed by the discovered git dir, so workspaces that share a repository
+    // share its facts for this refresh.
+    let mut git_facts_by_repo: HashMap<PathBuf, GitFacts> = HashMap::new();
     for target in request.targets {
         // Deduped: sibling panes can share a foreground process group, and
         // this becomes an `lsof -p` argument.
@@ -1318,7 +1336,12 @@ fn collect_sidebar_metadata(
         let previous = existing_metadata.get(&target.workspace_name);
         metadata.insert(
             target.workspace_name.clone(),
-            load_workspace_metadata(&target.cwd_path, &process_ids, previous),
+            load_workspace_metadata(
+                &target.cwd_path,
+                &process_ids,
+                previous,
+                &mut git_facts_by_repo,
+            ),
         );
     }
 
@@ -1379,88 +1402,98 @@ fn load_workspace_metadata(
     cwd_path: &Path,
     process_ids: &[u32],
     existing: Option<&WorkspaceMetadata>,
+    git_facts_by_repo: &mut HashMap<PathBuf, GitFacts>,
 ) -> WorkspaceMetadata {
-    let repo = Repository::discover(cwd_path).ok();
-    let git_branch = repo.as_ref().and_then(|repo| {
-        repo.head().ok().and_then(|head| {
-            head.shorthand()
-                .map(ToString::to_string)
-                .or_else(|| head.target().map(|oid| oid.to_string()[..7].to_string()))
-        })
-    });
-    let now = Instant::now();
-    let should_refresh_pull_request = existing
-        .and_then(|metadata| {
-            let branch_matches =
-                metadata.pull_request_checked_for_branch.as_deref() == git_branch.as_deref();
-            let fresh_enough = metadata
-                .pull_request_checked_at
-                .map(|checked_at| {
-                    now.duration_since(checked_at) < SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL
-                })
-                .unwrap_or(false);
-            if branch_matches && fresh_enough {
-                Some(false)
-            } else {
-                Some(true)
-            }
-        })
-        .unwrap_or(true);
-
-    let pull_request = if should_refresh_pull_request {
-        repo.as_ref().and_then(|repo| {
-            repo.workdir()
-                .or_else(|| repo.path().parent())
-                .and_then(load_pull_request)
-        })
-    } else {
-        existing.and_then(|metadata| metadata.pull_request.clone())
-    };
-    let pull_request_checked_for_branch = if should_refresh_pull_request {
-        repo.as_ref().and_then(|_| git_branch.clone())
-    } else {
-        existing.and_then(|metadata| metadata.pull_request_checked_for_branch.clone())
-    };
-    let pull_request_checked_at = if should_refresh_pull_request {
-        repo.as_ref().map(|_| now)
-    } else {
-        existing.and_then(|metadata| metadata.pull_request_checked_at)
-    };
-
-    let (git_dirty, git_status_checked) = match repo.as_ref() {
-        None => (false, None),
-        Some(repo) => {
-            let repo_root = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
-            let reusable = existing.filter(|metadata| {
-                metadata.git_status_checked.as_ref().map_or(false, |check| {
-                    check.is_fresh(&repo_root, git_branch.as_deref(), now)
-                })
-            });
-            match reusable {
-                Some(metadata) => (metadata.git_dirty, metadata.git_status_checked.clone()),
-                None => {
-                    let started = Instant::now();
-                    // A failed scan is recorded too, so that a persistent
-                    // error (eg: an unreadable index) is retried on the same
-                    // schedule as a successful scan rather than every refresh.
-                    let git_dirty = repo_has_changes(repo).unwrap_or(false);
-                    let check = GitStatusCheck {
-                        repo_root,
-                        branch: git_branch.clone(),
-                        at: started,
-                        cost: started.elapsed(),
-                    };
-                    (git_dirty, Some(check))
-                }
-            }
-        }
+    // Discovery only walks up to find the git dir; opening the repository
+    // parses its config and is deferred until we know it hasn't been done.
+    let no_ceiling_dirs = std::iter::empty::<&Path>();
+    let git = match Repository::discover_path(cwd_path, no_ceiling_dirs) {
+        Ok(git_dir) => git_facts_by_repo
+            .entry(git_dir)
+            .or_insert_with_key(|git_dir| load_git_facts(git_dir, existing))
+            .clone(),
+        Err(_) => GitFacts::default(),
     };
 
     WorkspaceMetadata {
-        git_branch,
-        git_dirty,
-        git_status_checked,
+        git_branch: git.branch,
+        git_dirty: git.dirty,
+        git_status_checked: git.status_checked,
         listening_ports: load_listening_ports(process_ids),
+        pull_request: git.pull_request,
+        pull_request_checked_for_branch: git.pull_request_checked_for_branch,
+        pull_request_checked_at: git.pull_request_checked_at,
+    }
+}
+
+/// Read a repository's facts, reusing `existing` where they are still fresh.
+///
+/// `existing` is the previous metadata of whichever workspace on this
+/// repository was reached first; the repository is the same, so it serves
+/// for all of them.
+fn load_git_facts(git_dir: &Path, existing: Option<&WorkspaceMetadata>) -> GitFacts {
+    let Ok(repo) = Repository::open(git_dir) else {
+        return GitFacts::default();
+    };
+    let branch = repo.head().ok().and_then(|head| {
+        head.shorthand()
+            .map(ToString::to_string)
+            .or_else(|| head.target().map(|oid| oid.to_string()[..7].to_string()))
+    });
+    let now = Instant::now();
+
+    let pull_request_is_fresh = existing.map_or(false, |metadata| {
+        metadata.pull_request_checked_for_branch.as_deref() == branch.as_deref()
+            && metadata
+                .pull_request_checked_at
+                .map_or(false, |checked_at| {
+                    now.duration_since(checked_at) < SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL
+                })
+    });
+    let (pull_request, pull_request_checked_for_branch, pull_request_checked_at) =
+        match existing.filter(|_| pull_request_is_fresh) {
+            Some(metadata) => (
+                metadata.pull_request.clone(),
+                metadata.pull_request_checked_for_branch.clone(),
+                metadata.pull_request_checked_at,
+            ),
+            None => {
+                let pull_request = repo
+                    .workdir()
+                    .or_else(|| repo.path().parent())
+                    .and_then(load_pull_request);
+                (pull_request, branch.clone(), Some(now))
+            }
+        };
+
+    let repo_root = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
+    let status_is_fresh = existing.map_or(false, |metadata| {
+        metadata.git_status_checked.as_ref().map_or(false, |check| {
+            check.is_fresh(&repo_root, branch.as_deref(), now)
+        })
+    });
+    let (dirty, status_checked) = match existing.filter(|_| status_is_fresh) {
+        Some(metadata) => (metadata.git_dirty, metadata.git_status_checked.clone()),
+        None => {
+            let started = Instant::now();
+            // A failed scan is recorded too, so that a persistent error
+            // (eg: an unreadable index) is retried on the same schedule as
+            // a successful scan rather than every refresh.
+            let dirty = repo_has_changes(&repo).unwrap_or(false);
+            let check = GitStatusCheck {
+                repo_root,
+                branch: branch.clone(),
+                at: started,
+                cost: started.elapsed(),
+            };
+            (dirty, Some(check))
+        }
+    };
+
+    GitFacts {
+        branch,
+        dirty,
+        status_checked,
         pull_request,
         pull_request_checked_for_branch,
         pull_request_checked_at,
@@ -1587,12 +1620,46 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 #[cfg(test)]
 mod test {
     use super::{
-        detect_agent_type_from_names, parse_listening_ports, parse_pull_request, AgentType,
-        GitStatusCheck, SidebarState, WorkspacePullRequest, WorkspacePullRequestStatus,
-        SIDEBAR_GIT_STATUS_COST_FACTOR, SIDEBAR_GIT_STATUS_MIN_INTERVAL,
+        detect_agent_type_from_names, load_workspace_metadata, parse_listening_ports,
+        parse_pull_request, AgentType, GitStatusCheck, SidebarState, WorkspaceMetadata,
+        WorkspacePullRequest, WorkspacePullRequestStatus, SIDEBAR_GIT_STATUS_COST_FACTOR,
+        SIDEBAR_GIT_STATUS_MIN_INTERVAL,
     };
+    use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn workspaces_sharing_a_repository_share_one_status_scan_per_refresh() {
+        let root = std::env::temp_dir().join(format!(
+            "wezmux-sidebar-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let nested = root.join("crates").join("deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        git2::Repository::init(&root).unwrap();
+        std::fs::write(root.join("untracked.txt"), "x").unwrap();
+
+        // A fresh PR check with no branch (HEAD is unborn) keeps the `gh`
+        // probe out of the test; the status scan is what's under test.
+        let existing = WorkspaceMetadata {
+            pull_request_checked_for_branch: None,
+            pull_request_checked_at: Some(Instant::now()),
+            ..WorkspaceMetadata::default()
+        };
+        let mut by_repo = HashMap::new();
+        let first = load_workspace_metadata(&root, &[], Some(&existing), &mut by_repo);
+        let second = load_workspace_metadata(&nested, &[], Some(&existing), &mut by_repo);
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert!(first.git_dirty, "untracked file should make the repo dirty");
+        assert_eq!(by_repo.len(), 1, "both cwds resolve to one repository");
+        // Same scan, not merely an equal one: the timestamp is shared.
+        assert_eq!(first.git_status_checked, second.git_status_checked);
+        assert!(first.git_status_checked.is_some());
+        assert_eq!(second.git_dirty, first.git_dirty);
+    }
 
     fn git_status_check(cost: Duration) -> GitStatusCheck {
         GitStatusCheck {

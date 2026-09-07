@@ -77,7 +77,7 @@ Sidebar width subtracts from terminal columns in `resize.rs`.
 
 Runs in a background thread, coalesced with 200ms delay:
 - **Git branch**: `libgit2` (via `git2` crate) — reads `.git/HEAD` every refresh
-- **Git dirty**: `repo.statuses()` without recursing untracked dirs — throttled per workspace by `GitStatusCheck` (≥5s, scaled ×20 by the last scan's duration; branch or repo change forces a rescan). Pane output schedules refreshes continuously, so an unthrottled scan pins a core on big repos.
+- **Git dirty**: `repo.statuses()` without recursing untracked dirs — throttled per workspace by `GitStatusCheck` (≥5s, scaled ×20 by the last scan's duration; branch or repo change forces a rescan). Workspaces whose cwd resolves to the same repo share one open + one scan per refresh (`GitFacts`, keyed by git dir). Pane output schedules refreshes continuously, so an unthrottled scan pins a core on big repos.
 - **PR status**: `gh pr view --json` subprocess — 60s refresh interval, degrades if `gh` missing
 - **Listening ports**: `lsof -nP -iTCP -sTCP:LISTEN` subprocess
 - **Agent status**: OSC 7777 (real-time, no polling)
