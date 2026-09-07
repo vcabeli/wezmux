@@ -19,6 +19,15 @@ use std::time::{Duration, Instant};
 
 const SIDEBAR_METADATA_COALESCE_DELAY: Duration = Duration::from_millis(200);
 const SIDEBAR_PULL_REQUEST_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Floor on the time between two `git status` scans of one workspace.
+///
+/// Every chunk of pane output schedules a metadata refresh, and an agent's
+/// spinner produces output continuously.  Left unthrottled, the refresh ran
+/// back-to-back and pinned a core walking the working tree for hours.
+const SIDEBAR_GIT_STATUS_MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// A scan is not repeated until this many times its own duration has passed,
+/// so scanning a huge tree can never take more than ~1/20th of a core.
+const SIDEBAR_GIT_STATUS_COST_FACTOR: u32 = 20;
 
 /// How long the process table snapshot backing `PaneProcessFacts` may be
 /// reused.  The refresh itself is coalesced to
@@ -70,10 +79,43 @@ pub struct SidebarState {
 pub struct WorkspaceMetadata {
     pub git_branch: Option<String>,
     pub git_dirty: bool,
+    /// The scan that produced `git_dirty`, or `None` if there was no repo.
+    git_status_checked: Option<GitStatusCheck>,
     pub listening_ports: Vec<u16>,
     pub pull_request: Option<WorkspacePullRequest>,
     pull_request_checked_for_branch: Option<String>,
     pull_request_checked_at: Option<Instant>,
+}
+
+/// Provenance of a `git_dirty` value: what was scanned, when, and how long
+/// it took.  Decides whether the next refresh may reuse the value instead of
+/// walking the working tree again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitStatusCheck {
+    repo_root: PathBuf,
+    branch: Option<String>,
+    at: Instant,
+    cost: Duration,
+}
+
+impl GitStatusCheck {
+    /// Whether the `git_dirty` this scan produced can stand in for a new scan
+    /// of `repo_root` on `branch` at `now`.
+    ///
+    /// A different repository or branch is never fresh: the dirty state is
+    /// about a different tree.  Otherwise the value is reused for a window
+    /// that grows with how expensive the scan was.
+    fn is_fresh(&self, repo_root: &Path, branch: Option<&str>, now: Instant) -> bool {
+        self.repo_root == repo_root
+            && self.branch.as_deref() == branch
+            && now.duration_since(self.at) < self.reuse_for()
+    }
+
+    fn reuse_for(&self) -> Duration {
+        self.cost
+            .saturating_mul(SIDEBAR_GIT_STATUS_COST_FACTOR)
+            .max(SIDEBAR_GIT_STATUS_MIN_INTERVAL)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +233,7 @@ impl SidebarState {
                             WorkspaceMetadata {
                                 git_branch: v.git_branch,
                                 git_dirty: v.git_dirty,
+                                git_status_checked: None,
                                 listening_ports: v.listening_ports,
                                 pull_request: v.pull_request.map(|pr| WorkspacePullRequest {
                                     number: pr.number,
@@ -1384,12 +1427,39 @@ fn load_workspace_metadata(
         existing.and_then(|metadata| metadata.pull_request_checked_at)
     };
 
+    let (git_dirty, git_status_checked) = match repo.as_ref() {
+        None => (false, None),
+        Some(repo) => {
+            let repo_root = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
+            let reusable = existing.filter(|metadata| {
+                metadata.git_status_checked.as_ref().map_or(false, |check| {
+                    check.is_fresh(&repo_root, git_branch.as_deref(), now)
+                })
+            });
+            match reusable {
+                Some(metadata) => (metadata.git_dirty, metadata.git_status_checked.clone()),
+                None => {
+                    let started = Instant::now();
+                    // A failed scan is recorded too, so that a persistent
+                    // error (eg: an unreadable index) is retried on the same
+                    // schedule as a successful scan rather than every refresh.
+                    let git_dirty = repo_has_changes(repo).unwrap_or(false);
+                    let check = GitStatusCheck {
+                        repo_root,
+                        branch: git_branch.clone(),
+                        at: started,
+                        cost: started.elapsed(),
+                    };
+                    (git_dirty, Some(check))
+                }
+            }
+        }
+    };
+
     WorkspaceMetadata {
         git_branch,
-        git_dirty: repo
-            .as_ref()
-            .and_then(|repo| repo_has_changes(repo).ok())
-            .unwrap_or(false),
+        git_dirty,
+        git_status_checked,
         listening_ports: load_listening_ports(process_ids),
         pull_request,
         pull_request_checked_for_branch,
@@ -1397,10 +1467,17 @@ fn load_workspace_metadata(
     }
 }
 
+/// Whether the working tree or index differs from HEAD.
+///
+/// Only the yes/no answer is used, so untracked directories are reported as
+/// a single entry rather than being walked.  libgit2 still looks inside one
+/// far enough to tell whether it holds anything that isn't ignored, which is
+/// what `git status` shows too, but it stops at the first such file instead
+/// of enumerating every report, figure and editor cache in the tree.
 fn repo_has_changes(repo: &Repository) -> anyhow::Result<bool> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
+        .recurse_untracked_dirs(false)
         .include_ignored(false)
         .exclude_submodules(false);
 
@@ -1511,9 +1588,76 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 mod test {
     use super::{
         detect_agent_type_from_names, parse_listening_ports, parse_pull_request, AgentType,
-        SidebarState, WorkspacePullRequest, WorkspacePullRequestStatus,
+        GitStatusCheck, SidebarState, WorkspacePullRequest, WorkspacePullRequestStatus,
+        SIDEBAR_GIT_STATUS_COST_FACTOR, SIDEBAR_GIT_STATUS_MIN_INTERVAL,
     };
-    use std::time::Duration;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+
+    fn git_status_check(cost: Duration) -> GitStatusCheck {
+        GitStatusCheck {
+            repo_root: PathBuf::from("/repo"),
+            branch: Some("main".to_string()),
+            at: Instant::now(),
+            cost,
+        }
+    }
+
+    #[test]
+    fn git_status_is_reused_within_the_minimum_interval() {
+        let check = git_status_check(Duration::from_millis(10));
+        let repo = Path::new("/repo");
+
+        // Pane output arrives every few milliseconds while an agent works.
+        // Each refresh must not walk the working tree again.
+        assert!(check.is_fresh(repo, Some("main"), check.at + Duration::from_millis(200)));
+        assert!(check.is_fresh(
+            repo,
+            Some("main"),
+            check.at + SIDEBAR_GIT_STATUS_MIN_INTERVAL - Duration::from_millis(1)
+        ));
+        assert!(!check.is_fresh(
+            repo,
+            Some("main"),
+            check.at + SIDEBAR_GIT_STATUS_MIN_INTERVAL
+        ));
+    }
+
+    #[test]
+    fn slow_git_status_is_reused_in_proportion_to_its_cost() {
+        // A scan of a huge tree took two seconds.  Re-running it every five
+        // would still burn 40% of a core; it must wait for the cost factor.
+        let cost = Duration::from_secs(2);
+        let check = git_status_check(cost);
+        let repo = Path::new("/repo");
+        let reuse_for = cost * SIDEBAR_GIT_STATUS_COST_FACTOR;
+        assert!(reuse_for > SIDEBAR_GIT_STATUS_MIN_INTERVAL);
+
+        assert!(check.is_fresh(
+            repo,
+            Some("main"),
+            check.at + SIDEBAR_GIT_STATUS_MIN_INTERVAL
+        ));
+        assert!(check.is_fresh(
+            repo,
+            Some("main"),
+            check.at + reuse_for - Duration::from_millis(1)
+        ));
+        assert!(!check.is_fresh(repo, Some("main"), check.at + reuse_for));
+    }
+
+    #[test]
+    fn git_status_is_never_reused_across_repositories_or_branches() {
+        let check = git_status_check(Duration::from_millis(10));
+        let soon = check.at + Duration::from_millis(1);
+
+        // Switching branch changes what "dirty" is about; so does a cwd that
+        // resolved to a different repository that happens to share the name.
+        assert!(!check.is_fresh(Path::new("/repo"), Some("feature"), soon));
+        assert!(!check.is_fresh(Path::new("/repo"), None, soon));
+        assert!(!check.is_fresh(Path::new("/other"), Some("main"), soon));
+        assert!(check.is_fresh(Path::new("/repo"), Some("main"), soon));
+    }
 
     #[test]
     fn metadata_refresh_coalesces_rather_than_postponing() {
