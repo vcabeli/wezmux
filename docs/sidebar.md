@@ -93,6 +93,6 @@ The sidebar polls workspace metadata in the background so it never blocks render
 - **Git branch** -- read from `.git/HEAD` in the workspace's working directory on every refresh
 - **Git dirty status** -- a `git status` scan of the working tree, run at most every 5 seconds per workspace. A scan that takes longer is repeated less often in proportion to its cost, so a huge tree with a large untracked footprint costs a small fraction of a core rather than a whole one. Switching branch or repository forces a fresh scan, and workspaces open on the same repository share a single scan.
 - **Pull request status** -- fetched via `gh pr list` (degrades gracefully if `gh` is not installed)
-- **Listening ports** -- scanned from the network stack for processes in the workspace
+- **Listening ports** -- scanned from the network stack for processes in the workspace, at most every 5 seconds per workspace unless its processes change
 
 Polling is coalesced with a 200ms delay to avoid thrashing when multiple workspaces change at once. Results are cached and survive session restores.

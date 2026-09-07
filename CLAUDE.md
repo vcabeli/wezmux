@@ -71,6 +71,8 @@ Uses WezTerm's `box_model.rs` (same as `fancy_tab_bar.rs`):
 3. `render_element()` → GPU quads
 4. Extract `UIItem`s → hit-testing for clicks/drag
 
+Steps 1–2 shape text (HarfBuzz + FreeType) and are the expensive part, so they run only when the layout inputs change: `paint_sidebar` keeps the computed trees in `SidebarRenderCache`, keyed on the entries, geometry, dpi, config/shape generation and the spinner frame, and per frame only translates for scroll and re-emits quads. Box-model text shaping is also memoized per (font, string) in `TermWindow::element_shape_cache` (cleared with `shape_cache`); the shaper unloads fallback fonts that resolve nothing, so uncached shaping of icon/spinner/emoji glyphs reloads and re-measures fonts every time.
+
 Sidebar width subtracts from terminal columns in `resize.rs`.
 
 ### Sidebar metadata gathering
@@ -79,7 +81,7 @@ Runs in a background thread, coalesced with 200ms delay:
 - **Git branch**: `libgit2` (via `git2` crate) — reads `.git/HEAD` every refresh
 - **Git dirty**: `repo.statuses()` without recursing untracked dirs — throttled per workspace by `GitStatusCheck` (≥5s, scaled ×20 by the last scan's duration; branch or repo change forces a rescan). Workspaces whose cwd resolves to the same repo share one open + one scan per refresh (`GitFacts`, keyed by git dir). Pane output schedules refreshes continuously, so an unthrottled scan pins a core on big repos.
 - **PR status**: `gh pr view --json` subprocess — 60s refresh interval, degrades if `gh` missing
-- **Listening ports**: `lsof -nP -iTCP -sTCP:LISTEN` subprocess
+- **Listening ports**: `lsof -nP -iTCP -sTCP:LISTEN` subprocess — reused for 5s per workspace while the pid set is unchanged (`PortsCheck`)
 - **Agent status**: OSC 7777 (real-time, no polling)
 
 Results cached in `SidebarState.metadata` HashMap. Persisted to session file for fast restore.

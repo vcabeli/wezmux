@@ -95,6 +95,7 @@ impl crate::TermWindow {
                         self.invalidate_modal();
                         self.shape_generation += 1;
                         self.shape_cache.borrow_mut().clear();
+                        self.element_shape_cache.borrow_mut().clear();
                         self.line_to_ele_shape_cache.borrow_mut().clear();
                     } else {
                         log::error!("paint_pass failed: {:#}", err);

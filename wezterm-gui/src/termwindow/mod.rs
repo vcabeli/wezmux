@@ -446,6 +446,11 @@ pub struct TermWindow {
     quad_generation: usize,
     shape_generation: usize,
     shape_cache: RefCell<LfuCache<ShapeCacheKey, anyhow::Result<Rc<Vec<ShapedInfo>>>>>,
+    /// Shaped text for box-model elements (sidebar, tab bar, modals), keyed
+    /// by font and string.  Cleared alongside `shape_cache`.
+    element_shape_cache: RefCell<
+        LfuCache<box_model::ElementShapeCacheKey, Rc<Vec<wezterm_font::shaper::GlyphInfo>>>,
+    >,
     line_to_ele_shape_cache: RefCell<LfuCache<LineToEleShapeCacheKey, LineToElementShapeItem>>,
 
     line_state_cache: RefCell<LfuCacheU64<Arc<CachedLineState>>>,
@@ -759,6 +764,12 @@ impl TermWindow {
             shape_cache: RefCell::new(LfuCache::new(
                 "shape_cache.hit.rate",
                 "shape_cache.miss.rate",
+                |config| config.shape_cache_size,
+                &config,
+            )),
+            element_shape_cache: RefCell::new(LfuCache::new(
+                "element_shape_cache.hit.rate",
+                "element_shape_cache.miss.rate",
                 |config| config.shape_cache_size,
                 &config,
             )),
@@ -1144,6 +1155,7 @@ impl TermWindow {
             TermWindowNotif::InvalidateShapeCache => {
                 self.shape_generation += 1;
                 self.shape_cache.borrow_mut().clear();
+                self.element_shape_cache.borrow_mut().clear();
                 self.invalidate_modal();
                 window.invalidate();
             }
@@ -1829,6 +1841,11 @@ impl TermWindow {
             let mut shape_cache = self.shape_cache.borrow_mut();
             shape_cache.update_config(&config);
             shape_cache.clear();
+        }
+        {
+            let mut element_shape_cache = self.element_shape_cache.borrow_mut();
+            element_shape_cache.update_config(&config);
+            element_shape_cache.clear();
         }
         self.line_state_cache.borrow_mut().update_config(&config);
         self.line_quad_cache.borrow_mut().update_config(&config);
