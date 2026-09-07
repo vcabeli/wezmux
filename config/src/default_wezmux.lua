@@ -31,6 +31,14 @@ end)
 -- Suppress native toasts from focused pane (sidebar shows them instead)
 config.notification_handling = 'SuppressFromFocusedPane'
 
+-- Play a sound when an agent stops working (goes idle).
+-- `sound` is a macOS system sound name (under /System/Library/Sounds)
+-- or an absolute path to an audio file. Set enabled = false to mute.
+config.agent_stop_sound = {
+  enabled = true,
+  sound = 'Glass',
+}
+
 config.inactive_pane_hsb = {
   saturation = 0.5,
   brightness = 0.5,
