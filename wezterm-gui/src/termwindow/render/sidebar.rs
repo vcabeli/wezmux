@@ -13,6 +13,7 @@ use config::{Dimension, DimensionContext};
 use std::env;
 use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use wezterm_font::LoadedFont;
 use window::color::LinearRgba;
 
@@ -222,9 +223,8 @@ fn agent_card_title<'a>(
 
     let title = entry.title.trim();
 
-    // Normalize agent-owned status prefixes only to decide whether a title is
-    // generic. A useful title is returned verbatim: its own live status glyph
-    // is more accurate than a second animation synthesized by the sidebar.
+    // Normalize agent-owned status prefixes to decide whether a title is
+    // generic. Preserve useful titles, including OMP's own live status glyph.
     let summary = title
         .trim_start_matches([
             '\u{2733}', '\u{2731}', '\u{273B}', '\u{2736}', '\u{00B7}', '*',
@@ -267,13 +267,35 @@ fn agent_card_title<'a>(
 fn agent_card_heading(
     entry: &WorkspaceEntry,
     agent: &crate::termwindow::sidebar::AgentInfo,
+    milliseconds: u128,
 ) -> String {
     let title = agent_card_title(entry, agent);
-    if title == agent.display_name {
+    if uses_sidebar_spinner(agent) {
+        const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let frame = FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize];
+        // Replace Claude's title glyph so there is only one working icon.
+        // Codex conversation titles are plain text supplied by OSC 7777.
+        let title = if agent.agent_type == AgentType::ClaudeCode {
+            title
+                .trim_start_matches(|ch| {
+                    matches!(ch, '✳' | '✱' | '✻' | '✶' | '·' | '*')
+                        || ('\u{2800}'..='\u{28FF}').contains(&ch)
+                })
+                .trim_start()
+        } else {
+            title
+        };
+        format!("{frame} {title}")
+    } else if title == agent.display_name {
         format!("{} {}", agent_type_icon(agent.agent_type), title)
     } else {
         title.to_string()
     }
+}
+
+fn uses_sidebar_spinner(agent: &crate::termwindow::sidebar::AgentInfo) -> bool {
+    agent.status == AgentStatus::Working
+        && matches!(agent.agent_type, AgentType::ClaudeCode | AgentType::Codex)
 }
 
 /// Returns a nerd font icon for common foreground processes.
@@ -446,6 +468,7 @@ fn build_card_element(
     mono_cols: usize,
     card_width: f32,
     theme: &SidebarTheme,
+    milliseconds: u128,
 ) -> Element {
     let is_active = entry.is_active;
     let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
@@ -497,7 +520,7 @@ fn build_card_element(
 
     // Title line (with optional unread badge prefix and nerd font icon)
     let base_title = if let Some(agent) = &entry.agent {
-        agent_card_heading(entry, agent)
+        agent_card_heading(entry, agent, milliseconds)
     } else if let Some(icon) = entry
         .foreground_process_name
         .as_deref()
@@ -809,6 +832,13 @@ impl crate::TermWindow {
 
         // Workspace cards
         let entries = self.sidebar_entries();
+        let milliseconds = self.created.elapsed().as_millis();
+        if entries
+            .iter()
+            .any(|entry| entry.agent.as_ref().is_some_and(uses_sidebar_spinner))
+        {
+            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
+        }
         for entry in &entries {
             root_children.push(build_card_element(
                 &font,
@@ -819,6 +849,7 @@ impl crate::TermWindow {
                 mono_cols,
                 content_width,
                 &theme,
+                milliseconds,
             ));
         }
 
@@ -1271,7 +1302,7 @@ mod test {
         let entry = agent_entry("\u{2733} Figure 26b missing x axis", Some("node"));
         let agent = entry.agent.as_ref().unwrap();
         assert_eq!(
-            agent_card_heading(&entry, agent),
+            agent_card_heading(&entry, agent, 0),
             "\u{2733} Figure 26b missing x axis"
         );
     }
@@ -1310,7 +1341,7 @@ mod test {
             agent.display_name = "Oh My Pi".to_string();
 
             assert_eq!(
-                agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+                agent_card_heading(&entry, entry.agent.as_ref().unwrap(), 0),
                 title
             );
         }
@@ -1325,7 +1356,7 @@ mod test {
         agent.conversation_title = Some("Use Codex conversation titles".to_string());
 
         assert_eq!(
-            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap(), 0),
             "Use Codex conversation titles"
         );
     }
@@ -1338,8 +1369,71 @@ mod test {
         agent.display_name = "Codex".to_string();
 
         assert_eq!(
-            agent_card_heading(&entry, entry.agent.as_ref().unwrap()),
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap(), 0),
             "\u{2731} Codex"
+        );
+    }
+
+    #[test]
+    fn working_codex_and_claude_headings_animate() {
+        for agent_type in [AgentType::Codex, AgentType::ClaudeCode] {
+            let mut entry = agent_entry("✳ Fix session restore", Some("node"));
+            let agent = entry.agent.as_mut().unwrap();
+            agent.agent_type = agent_type;
+            agent.conversation_title = Some("Fix session restore".to_string());
+            agent.status = AgentStatus::Working;
+            let agent = entry.agent.as_ref().unwrap();
+
+            assert_eq!(
+                agent_card_heading(&entry, agent, 0),
+                "⠋ Fix session restore"
+            );
+            assert_eq!(
+                agent_card_heading(&entry, agent, 120),
+                "⠙ Fix session restore"
+            );
+        }
+    }
+
+    #[test]
+    fn working_agent_without_a_title_still_animates() {
+        let mut entry = agent_entry("claude", Some("claude"));
+        entry.agent.as_mut().unwrap().status = AgentStatus::Working;
+        assert_eq!(
+            agent_card_heading(&entry, entry.agent.as_ref().unwrap(), 120),
+            "⠙ Claude Code"
+        );
+    }
+
+    #[test]
+    fn sidebar_spinner_stops_when_agent_is_idle_or_needs_input() {
+        for status in [
+            AgentStatus::Idle,
+            AgentStatus::NeedsInput,
+            AgentStatus::Unknown,
+        ] {
+            let mut entry = agent_entry("✳ Fix session restore", Some("node"));
+            entry.agent.as_mut().unwrap().status = status;
+            let agent = entry.agent.as_ref().unwrap();
+            assert!(!super::uses_sidebar_spinner(agent));
+            assert_eq!(
+                agent_card_heading(&entry, agent, 120),
+                "✳ Fix session restore"
+            );
+        }
+    }
+
+    #[test]
+    fn working_omp_keeps_its_own_spinner() {
+        let mut entry = agent_entry("π ⠹ Fix session restore", Some("omp"));
+        let agent = entry.agent.as_mut().unwrap();
+        agent.agent_type = AgentType::Omp;
+        agent.status = AgentStatus::Working;
+        let agent = entry.agent.as_ref().unwrap();
+        assert!(!super::uses_sidebar_spinner(agent));
+        assert_eq!(
+            agent_card_heading(&entry, agent, 120),
+            "π ⠹ Fix session restore"
         );
     }
 

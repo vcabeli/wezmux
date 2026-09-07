@@ -2859,7 +2859,7 @@ impl TermWindow {
 
                 match config.window_close_confirmation {
                     WindowCloseConfirmation::NeverPrompt => {
-                        // SIGTERM agents (claude, etc.) so they print their
+                        // Request agent exits so they print their
                         // "Resume this session with: ..." line before we
                         // snapshot scrollback.
                         let killed = mux::quit_hooks::graceful_kill_all_agents(&mux);
