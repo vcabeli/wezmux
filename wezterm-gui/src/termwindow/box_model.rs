@@ -15,8 +15,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use termwiz::cell::{grapheme_column_width, Presentation};
 use termwiz::surface::Line;
+use wezterm_font::shaper::GlyphInfo;
 use wezterm_font::units::PixelUnit;
-use wezterm_font::LoadedFont;
+use wezterm_font::{LoadedFont, LoadedFontId};
 use wezterm_term::color::{ColorAttribute, ColorPalette};
 use window::bitmaps::atlas::Sprite;
 
@@ -405,6 +406,16 @@ pub struct LayoutContext<'a> {
     pub zindex: i8,
 }
 
+/// Identifies a shaped run of element text.  The same string in the same
+/// font shapes the same way until the shape caches are cleared.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ElementShapeCacheKey {
+    font_id: LoadedFontId,
+    /// `Presentation` isn't `Hash`; only emoji-vs-text matters here.
+    emoji_presentation: Option<bool>,
+    text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ComputedElement {
     pub item_type: Option<UIItemType>,
@@ -539,6 +550,45 @@ impl Element {
 }
 
 impl super::TermWindow {
+    /// Shape an element's text, reusing the result for the same text in the
+    /// same font.
+    ///
+    /// Elements are laid out again whenever anything about them changes, and
+    /// shaping dominates that cost: the shaper unloads any fallback font that
+    /// resolved nothing, so a string holding a glyph the primary font lacks
+    /// (an icon, a spinner frame, an emoji) reloads and re-measures those
+    /// fonts on every uncached shape.  The sidebar and tab bar cycle through
+    /// a small set of strings, so caching by text makes steady state free.
+    fn shape_element_text(
+        &self,
+        font: &Rc<LoadedFont>,
+        text: &str,
+        presentation: Option<Presentation>,
+    ) -> anyhow::Result<Rc<Vec<GlyphInfo>>> {
+        let key = ElementShapeCacheKey {
+            font_id: font.id(),
+            emoji_presentation: presentation.map(|p| p == Presentation::Emoji),
+            text: text.to_string(),
+        };
+        if let Some(infos) = self.element_shape_cache.borrow_mut().get(&key) {
+            return Ok(Rc::clone(infos));
+        }
+        let window = self.window.as_ref().unwrap().clone();
+        let infos = Rc::new(font.shape(
+            text,
+            move || window.notify(TermWindowNotif::InvalidateShapeCache),
+            BlockKey::filter_out_synthetic,
+            presentation,
+            wezterm_bidi::Direction::LeftToRight,
+            None,
+            None,
+        )?);
+        self.element_shape_cache
+            .borrow_mut()
+            .put(key, Rc::clone(&infos));
+        Ok(infos)
+    }
+
     pub fn compute_element<'a>(
         &self,
         context: &LayoutContext,
@@ -595,17 +645,7 @@ impl super::TermWindow {
 
         match &element.content {
             ElementContent::Text(s) => {
-                let window = self.window.as_ref().unwrap().clone();
-                let direction = wezterm_bidi::Direction::LeftToRight;
-                let infos = element.font.shape(
-                    &s,
-                    move || window.notify(TermWindowNotif::InvalidateShapeCache),
-                    BlockKey::filter_out_synthetic,
-                    element.presentation,
-                    direction,
-                    None,
-                    None,
-                )?;
+                let infos = self.shape_element_text(&element.font, s, element.presentation)?;
                 let mut computed_cells = vec![];
                 let mut glyph_cache = context.gl_state.glyph_cache.borrow_mut();
                 let mut pixel_width = 0.0;
@@ -613,7 +653,7 @@ impl super::TermWindow {
                 let mut min_y = 0.0f32;
                 let max_x = context.bounds.min_x() + max_width;
 
-                for info in infos {
+                for info in infos.iter() {
                     let cell_start = &s[info.cluster as usize..];
                     let mut iter = Graphemes::new(cell_start).peekable();
                     let grapheme = iter
@@ -632,7 +672,7 @@ impl super::TermWindow {
                         let followed_by_space = next_grapheme == Some(" ");
                         let num_cells = grapheme_column_width(grapheme, None);
                         let glyph = glyph_cache.cached_glyph(
-                            &info,
+                            info,
                             style,
                             followed_by_space,
                             &element.font,

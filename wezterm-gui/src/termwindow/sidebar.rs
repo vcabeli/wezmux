@@ -28,6 +28,11 @@ const SIDEBAR_GIT_STATUS_MIN_INTERVAL: Duration = Duration::from_secs(5);
 /// A scan is not repeated until this many times its own duration has passed,
 /// so scanning a huge tree can never take more than ~1/20th of a core.
 const SIDEBAR_GIT_STATUS_COST_FACTOR: u32 = 20;
+/// How long a workspace's listening-ports probe is reused.
+///
+/// `lsof` is a subprocess per workspace per refresh, and refreshes run
+/// continuously while any pane is producing output.
+const SIDEBAR_PORTS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How long the process table snapshot backing `PaneProcessFacts` may be
 /// reused.  The refresh itself is coalesced to
@@ -73,6 +78,8 @@ pub struct SidebarState {
     pub context_menu_workspace: Option<String>,
     /// Per-workspace customizations (display name, accent color, ordering).
     pub workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs,
+    /// The laid-out sidebar from the last frame, reused until its inputs change.
+    pub render_cache: Option<crate::termwindow::render::sidebar::SidebarRenderCache>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -82,6 +89,8 @@ pub struct WorkspaceMetadata {
     /// The scan that produced `git_dirty`, or `None` if there was no repo.
     git_status_checked: Option<GitStatusCheck>,
     pub listening_ports: Vec<u16>,
+    /// The probe that produced `listening_ports`.
+    ports_checked: Option<PortsCheck>,
     pub pull_request: Option<WorkspacePullRequest>,
     pull_request_checked_for_branch: Option<String>,
     pull_request_checked_at: Option<Instant>,
@@ -115,6 +124,22 @@ impl GitStatusCheck {
         self.cost
             .saturating_mul(SIDEBAR_GIT_STATUS_COST_FACTOR)
             .max(SIDEBAR_GIT_STATUS_MIN_INTERVAL)
+    }
+}
+
+/// Provenance of `listening_ports`: which processes were probed, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PortsCheck {
+    process_ids: Vec<u32>,
+    at: Instant,
+}
+
+impl PortsCheck {
+    /// Whether the ports this probe found can stand in for probing
+    /// `process_ids` at `now`.  A different set of processes is never fresh.
+    fn is_fresh(&self, process_ids: &[u32], now: Instant) -> bool {
+        self.process_ids == process_ids
+            && now.duration_since(self.at) < SIDEBAR_PORTS_REFRESH_INTERVAL
     }
 }
 
@@ -250,6 +275,7 @@ impl SidebarState {
                                 git_dirty: v.git_dirty,
                                 git_status_checked: None,
                                 listening_ports: v.listening_ports,
+                                ports_checked: None,
                                 pull_request: v.pull_request.map(|pr| WorkspacePullRequest {
                                     number: pr.number,
                                     status: match pr.status.as_str() {
@@ -291,6 +317,7 @@ impl SidebarState {
             last_known_agents: HashMap::new(),
             context_menu_workspace: None,
             workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs::load(),
+            render_cache: None,
         }
     }
 
@@ -726,7 +753,6 @@ impl crate::TermWindow {
     pub fn schedule_sidebar_metadata_refresh(&mut self) {
         self.sidebar
             .schedule_metadata_refresh(SIDEBAR_METADATA_COALESCE_DELAY);
-        self.invalidate_fancy_tab_bar();
         if let Some(window) = self.window.as_ref() {
             window.invalidate();
         }
@@ -1075,7 +1101,6 @@ impl crate::TermWindow {
 
         self.sidebar.metadata = metadata;
         self.sidebar.metadata_refresh_in_flight = false;
-        self.invalidate_fancy_tab_bar();
 
         if let Some(window) = self.window.as_ref() {
             window.invalidate();
@@ -1415,11 +1440,33 @@ fn load_workspace_metadata(
         Err(_) => GitFacts::default(),
     };
 
+    let now = Instant::now();
+    let ports_are_fresh = existing.map_or(false, |metadata| {
+        metadata
+            .ports_checked
+            .as_ref()
+            .map_or(false, |check| check.is_fresh(process_ids, now))
+    });
+    let (listening_ports, ports_checked) = match existing.filter(|_| ports_are_fresh) {
+        Some(metadata) => (
+            metadata.listening_ports.clone(),
+            metadata.ports_checked.clone(),
+        ),
+        None => (
+            load_listening_ports(process_ids),
+            Some(PortsCheck {
+                process_ids: process_ids.to_vec(),
+                at: now,
+            }),
+        ),
+    };
+
     WorkspaceMetadata {
         git_branch: git.branch,
         git_dirty: git.dirty,
         git_status_checked: git.status_checked,
-        listening_ports: load_listening_ports(process_ids),
+        listening_ports,
+        ports_checked,
         pull_request: git.pull_request,
         pull_request_checked_for_branch: git.pull_request_checked_for_branch,
         pull_request_checked_at: git.pull_request_checked_at,
@@ -1621,10 +1668,24 @@ fn parse_pull_request(output: &str) -> Option<WorkspacePullRequest> {
 mod test {
     use super::{
         detect_agent_type_from_names, load_workspace_metadata, parse_listening_ports,
-        parse_pull_request, AgentType, GitStatusCheck, SidebarState, WorkspaceMetadata,
+        parse_pull_request, AgentType, GitStatusCheck, PortsCheck, SidebarState, WorkspaceMetadata,
         WorkspacePullRequest, WorkspacePullRequestStatus, SIDEBAR_GIT_STATUS_COST_FACTOR,
-        SIDEBAR_GIT_STATUS_MIN_INTERVAL,
+        SIDEBAR_GIT_STATUS_MIN_INTERVAL, SIDEBAR_PORTS_REFRESH_INTERVAL,
     };
+
+    #[test]
+    fn listening_ports_are_reused_for_the_same_processes() {
+        let check = PortsCheck {
+            process_ids: vec![42, 7],
+            at: Instant::now(),
+        };
+        let soon = check.at + Duration::from_millis(1);
+
+        assert!(check.is_fresh(&[42, 7], soon));
+        // A pane's foreground process changed: probe again right away.
+        assert!(!check.is_fresh(&[42], soon));
+        assert!(!check.is_fresh(&[42, 7], check.at + SIDEBAR_PORTS_REFRESH_INTERVAL));
+    }
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};

@@ -272,7 +272,7 @@ fn agent_card_heading(
     let title = agent_card_title(entry, agent);
     if uses_sidebar_spinner(agent) {
         const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame = FRAMES[((milliseconds / 120) % FRAMES.len() as u128) as usize];
+        let frame = FRAMES[((milliseconds / SPINNER_FRAME_MS) % FRAMES.len() as u128) as usize];
         // Replace Claude's title glyph so there is only one working icon.
         // Codex conversation titles are plain text supplied by OSC 7777.
         let title = if agent.agent_type == AgentType::ClaudeCode {
@@ -701,6 +701,42 @@ fn build_card_element(
         .hover_colors(hover_colors)
 }
 
+/// Period of one sidebar spinner frame.
+const SPINNER_FRAME_MS: u128 = 120;
+
+/// Layout inputs for the sidebar.  When none of these change between frames,
+/// the previous layout is rendered again as is.
+#[derive(Debug, Clone, PartialEq)]
+struct SidebarRenderKey {
+    entries: Vec<WorkspaceEntry>,
+    origin_x: f32,
+    origin_y: f32,
+    content_width: f32,
+    scrollable_height: f32,
+    new_ws_button_height: f32,
+    dpi: usize,
+    /// Which spinner frame is showing, while any card animates.
+    spinner_frame: Option<u128>,
+    config_generation: usize,
+    /// Bumped when fallback fonts arrive; glyphs may then resolve differently.
+    shape_generation: usize,
+}
+
+/// The sidebar's laid-out element trees, kept between frames.
+///
+/// Laying the sidebar out shapes every card's text.  Rendering it is a walk
+/// that emits quads, and is all that has to happen per frame.
+#[derive(Debug, Clone)]
+pub struct SidebarRenderCache {
+    key: SidebarRenderKey,
+    /// Toolbar and cards, currently shifted up by `content_scroll`.
+    content: ComputedElement,
+    content_height: f32,
+    content_scroll: f32,
+    /// The fixed "New workspace" button, at its final position.
+    button: ComputedElement,
+}
+
 impl crate::TermWindow {
     pub fn paint_sidebar(&mut self, layers: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
         let sidebar_width = self.sidebar_pixel_width();
@@ -751,6 +787,103 @@ impl crate::TermWindow {
             item_type: UIItemType::SidebarResizeHandle,
         });
 
+        let entries = self.sidebar_entries();
+        let animating = entries
+            .iter()
+            .any(|entry| entry.agent.as_ref().is_some_and(uses_sidebar_spinner));
+        if animating {
+            self.update_next_frame_time(Some(
+                Instant::now() + Duration::from_millis(SPINNER_FRAME_MS as u64),
+            ));
+        }
+
+        // Reserve space at the bottom for the fixed "New workspace" button
+        let new_ws_button_height = 40.0_f32;
+        let scrollable_height = (sidebar_height - new_ws_button_height).max(0.0);
+        let content_width = sidebar_width - handle_width;
+
+        let key = SidebarRenderKey {
+            entries,
+            origin_x: sidebar_x,
+            origin_y: sidebar_y,
+            content_width,
+            scrollable_height,
+            new_ws_button_height,
+            dpi: self.dimensions.dpi,
+            spinner_frame: animating.then(|| self.created.elapsed().as_millis() / SPINNER_FRAME_MS),
+            config_generation: self.config.generation(),
+            shape_generation: self.shape_generation,
+        };
+        let stale = self
+            .sidebar
+            .render_cache
+            .as_ref()
+            .map_or(true, |cache| cache.key != key);
+        if stale {
+            let cache = self.layout_sidebar(key, &theme)?;
+            self.sidebar.render_cache = Some(cache);
+        }
+
+        // Clamp scroll offset: content height minus visible height, minimum 0
+        let content_height = self
+            .sidebar
+            .render_cache
+            .as_ref()
+            .map_or(0.0, |cache| cache.content_height);
+        let max_scroll = (content_height - scrollable_height).max(0.0);
+        self.sidebar.scroll_offset = self.sidebar.scroll_offset.clamp(0.0, max_scroll);
+        let scroll_offset = self.sidebar.scroll_offset;
+
+        let cache = self
+            .sidebar
+            .render_cache
+            .as_mut()
+            .expect("sidebar layout is ensured above");
+        // Scrolling moves the cached tree rather than laying it out again.
+        if cache.content_scroll != scroll_offset {
+            cache
+                .content
+                .translate(euclid::vec2(0.0, cache.content_scroll - scroll_offset));
+            cache.content_scroll = scroll_offset;
+        }
+
+        let gl_state = self.render_state.as_ref().unwrap();
+        let cache = self
+            .sidebar
+            .render_cache
+            .as_ref()
+            .expect("sidebar layout is ensured above");
+        self.render_element(&cache.content, gl_state, None)?;
+
+        // Background hit region FIRST (lowest priority — pushed before card items)
+        // Hit-testing iterates in reverse, so items pushed later win.
+        self.ui_items.push(UIItem {
+            x: sidebar_x as usize,
+            y: sidebar_y as usize,
+            width: content_width as usize,
+            height: sidebar_height as usize,
+            item_type: UIItemType::SidebarBackground,
+        });
+        // Card + button UI items on top (higher priority for clicks)
+        self.ui_items.extend(cache.content.ui_items());
+
+        self.render_element(&cache.button, gl_state, None)?;
+        self.ui_items.extend(cache.button.ui_items());
+
+        Ok(())
+    }
+
+    /// Lay the sidebar out: toolbar, workspace cards and the fixed button.
+    ///
+    /// This shapes every card's text, so it runs only when `key` changed.
+    fn layout_sidebar(
+        &self,
+        key: SidebarRenderKey,
+        theme: &SidebarTheme,
+    ) -> anyhow::Result<SidebarRenderCache> {
+        let content_width = key.content_width;
+        let scrollable_height = key.scrollable_height;
+
         // Title: bold Roboto 12pt. Body: regular Roboto 11pt. Meta: terminal mono font 10pt.
         let font = self.fonts.title_font()?;
         let body_font = self.fonts.sidebar_body_font()?;
@@ -758,7 +891,6 @@ impl crate::TermWindow {
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         // Available text width inside cards:
         // sidebar - handle - card margin (6+6) - card padding (12+12) - border (3)
-        let content_width = sidebar_width - handle_width;
         let card_chrome = 6.0 + 6.0 + 12.0 + 12.0 + 3.0;
         let text_width = (content_width - card_chrome).max(1.0);
         // The body font is proportional (Roboto) so cell_size.width is the
@@ -831,15 +963,8 @@ impl crate::TermWindow {
         );
 
         // Workspace cards
-        let entries = self.sidebar_entries();
-        let milliseconds = self.created.elapsed().as_millis();
-        if entries
-            .iter()
-            .any(|entry| entry.agent.as_ref().is_some_and(uses_sidebar_spinner))
-        {
-            self.update_next_frame_time(Some(Instant::now() + Duration::from_millis(120)));
-        }
-        for entry in &entries {
+        let milliseconds = key.spinner_frame.unwrap_or(0) * SPINNER_FRAME_MS;
+        for entry in &key.entries {
             root_children.push(build_card_element(
                 &font,
                 &body_font,
@@ -848,14 +973,10 @@ impl crate::TermWindow {
                 text_cols,
                 mono_cols,
                 content_width,
-                &theme,
+                theme,
                 milliseconds,
             ));
         }
-
-        // Reserve space at the bottom for the fixed "New workspace" button
-        let new_ws_button_height = 40.0_f32;
-        let scrollable_height = (sidebar_height - new_ws_button_height).max(0.0);
 
         let root = Element::new(&font, ElementContent::Children(root_children))
             .display(DisplayType::Block)
@@ -868,15 +989,15 @@ impl crate::TermWindow {
             });
 
         let gl_state = self.render_state.as_ref().unwrap();
-        let mut computed = self.compute_element(
+        let mut content = self.compute_element(
             &LayoutContext {
                 height: DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
+                    dpi: key.dpi as f32,
                     pixel_max: scrollable_height,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
+                    dpi: key.dpi as f32,
                     pixel_max: content_width,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
@@ -887,33 +1008,8 @@ impl crate::TermWindow {
             },
             &root,
         )?;
-
-        // Clamp scroll offset: content height minus visible height, minimum 0
-        let content_height = computed.bounds.height();
-        let max_scroll = (content_height - scrollable_height).max(0.0);
-        self.sidebar.scroll_offset = self.sidebar.scroll_offset.clamp(0.0, max_scroll);
-        let scroll_offset = self.sidebar.scroll_offset;
-
-        // Translate to sidebar position, applying scroll offset
-        computed.translate(euclid::vec2(sidebar_x, sidebar_y - scroll_offset));
-
-        // Render via box_model
-        self.render_element(&computed, gl_state, None)?;
-
-        // Background hit region FIRST (lowest priority — pushed before card items)
-        // Hit-testing iterates in reverse, so items pushed later win.
-        self.ui_items.push(UIItem {
-            x: sidebar_x as usize,
-            y: sidebar_y as usize,
-            width: (content_width) as usize,
-            height: sidebar_height as usize,
-            item_type: UIItemType::SidebarBackground,
-        });
-
-        // Card + button UI items on top (higher priority for clicks)
-        for item in computed.ui_items() {
-            self.ui_items.push(item);
-        }
+        let content_height = content.bounds.height();
+        content.translate(euclid::vec2(key.origin_x, key.origin_y));
 
         // "New workspace" button — fixed at the bottom of the sidebar (not scrollable)
         let new_ws_label =
@@ -967,35 +1063,36 @@ impl crate::TermWindow {
             }))
             .item_type(UIItemType::SidebarNewWorkspace);
 
-        let button_y = sidebar_y + scrollable_height;
+        let button_y = key.origin_y + scrollable_height;
 
-        let mut btn_computed = self.compute_element(
+        let mut button = self.compute_element(
             &LayoutContext {
                 height: DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
-                    pixel_max: new_ws_button_height,
+                    dpi: key.dpi as f32,
+                    pixel_max: key.new_ws_button_height,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
+                    dpi: key.dpi as f32,
                     pixel_max: content_width,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect(0., 0., content_width.max(1.0), new_ws_button_height),
+                bounds: euclid::rect(0., 0., content_width.max(1.0), key.new_ws_button_height),
                 metrics: &metrics,
                 gl_state,
                 zindex: 11,
             },
             &new_ws_button,
         )?;
+        button.translate(euclid::vec2(key.origin_x, button_y));
 
-        btn_computed.translate(euclid::vec2(sidebar_x, button_y));
-        self.render_element(&btn_computed, gl_state, None)?;
-        for item in btn_computed.ui_items() {
-            self.ui_items.push(item);
-        }
-
-        Ok(())
+        Ok(SidebarRenderCache {
+            key,
+            content,
+            content_height,
+            content_scroll: 0.0,
+            button,
+        })
     }
 }
 
