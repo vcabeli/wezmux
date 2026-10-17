@@ -6,6 +6,7 @@
 # populated. With --wait, upgrade that fallback if a name arrives later.
 
 command -v jq >/dev/null 2>&1 || exit 0
+. "$(dirname "$0")/../lib/agent-tty.sh"
 prompt=""
 
 if [ "$1" = "--hook" ]; then
@@ -14,11 +15,12 @@ if [ "$1" = "--hook" ]; then
     payload_thread_id=$(printf '%s' "$input" | jq -r '.session_id // .thread_id // empty' 2>/dev/null)
     [ -n "$payload_thread_id" ] && thread_id="$payload_thread_id"
     prompt=$(printf '%s' "$input" | jq -r '.prompt | strings' 2>/dev/null)
-    tty_path="${WEZMUX_TTY:-/dev/tty}"
+    tty_path=$(wezmux_agent_tty) || exit 0
     mode="${2:---wait}"
 else
     thread_id="$1"
-    tty_path="${2:-${WEZMUX_TTY:-/dev/tty}}"
+    tty_path="${2:-}"
+    [ -n "$tty_path" ] || tty_path=$(wezmux_agent_tty) || exit 0
     mode="${3:---once}"
 fi
 codex_state_dir="${CODEX_HOME:-$HOME/.codex}"

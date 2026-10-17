@@ -9,6 +9,9 @@
 # Read all of stdin (Claude Code sends JSON)
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 # Extract message from hook input
 msg=""
 if command -v jq >/dev/null 2>&1; then
@@ -31,11 +34,11 @@ msg=$(printf '%s' "$msg" | tr -d '\007\033;')
 # Claude Code sends these when waiting for plan approval, tool permission, etc.
 case "$msg" in
   *"needs your"*|*"waiting for"*|*"approval"*|*"permission"*)
-    printf '\033]7777;status;needs_input\007' > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+    printf '\033]7777;status;needs_input\007' > "$agent_tty" 2>/dev/null || true
     ;;
 esac
 
 # Emit both: structured status + notification store
-printf '\033]7777;message;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
-printf '\033]9;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]7777;message;%s\007' "$msg" > "$agent_tty" 2>/dev/null || true
+printf '\033]9;%s\007' "$msg" > "$agent_tty" 2>/dev/null || true
 exit 0

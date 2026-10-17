@@ -6,6 +6,9 @@
 
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 session_id=""
 if command -v jq >/dev/null 2>&1; then
     session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
@@ -36,6 +39,6 @@ count=0
 [ -f "$count_file" ] && count=$(cat "$count_file" 2>/dev/null)
 count=$(( count + 1 ))
 echo "$count" > "$count_file"
-printf '\033]7777;subagents;%s\007' "$count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]7777;subagents;%s\007' "$count" > "$agent_tty" 2>/dev/null || true
 
 exit 0

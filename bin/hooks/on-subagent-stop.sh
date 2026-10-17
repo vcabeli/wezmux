@@ -6,6 +6,9 @@
 
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 session_id=""
 bg_task_count=""
 cron_count=""
@@ -21,11 +24,11 @@ fi
 # different — but the new array fields are still cheap to surface).
 case "$bg_task_count" in
     ''|*[!0-9]*) ;;
-    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "$agent_tty" 2>/dev/null || true ;;
 esac
 case "$cron_count" in
     ''|*[!0-9]*) ;;
-    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "$agent_tty" 2>/dev/null || true ;;
 esac
 
 [ -z "$session_id" ] && exit 0
@@ -54,7 +57,7 @@ count=0
 count=$(( count - 1 ))
 [ "$count" -lt 0 ] && count=0
 echo "$count" > "$count_file"
-printf '\033]7777;subagents;%s\007' "$count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]7777;subagents;%s\007' "$count" > "$agent_tty" 2>/dev/null || true
 
 # Clean up when no subagents remain
 [ "$count" -eq 0 ] && rm -f "$count_file"
