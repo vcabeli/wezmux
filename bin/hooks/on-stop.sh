@@ -6,6 +6,9 @@
 
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 reason="end_turn"
 last_message=""
 bg_task_count=""
@@ -38,17 +41,17 @@ fi
 preview=$(printf '%s' "$preview" | tr -d '\007\033;')
 
 # Structured status for agent store
-printf '\033]7777;status;idle\007' > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
-printf '\033]7777;message;%s\007' "$preview" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]7777;status;idle\007' > "$agent_tty" 2>/dev/null || true
+printf '\033]7777;message;%s\007' "$preview" > "$agent_tty" 2>/dev/null || true
 # Background tasks & scheduled tasks: authoritative count from the harness.
 # Only emit when jq could parse the field (older Claude versions omit it).
 case "$bg_task_count" in
     ''|*[!0-9]*) ;;
-    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+    *) printf '\033]7777;background_tasks;%s\007' "$bg_task_count" > "$agent_tty" 2>/dev/null || true ;;
 esac
 case "$cron_count" in
     ''|*[!0-9]*) ;;
-    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true ;;
+    *) printf '\033]7777;session_crons;%s\007' "$cron_count" > "$agent_tty" 2>/dev/null || true ;;
 esac
 # Subagent count is managed exclusively by on-subagent-start/stop hooks.
 # Claude Code's Stop hook input does not currently expose a reason field
@@ -59,5 +62,5 @@ esac
 # mux.remove_agent_status().  Orphaned /tmp/wezmux-subagents-<session_id>
 # files from crashed sessions are harmless (unique session_id).
 # Notification store
-printf '\033]9;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]9;%s\007' "$msg" > "$agent_tty" 2>/dev/null || true
 exit 0

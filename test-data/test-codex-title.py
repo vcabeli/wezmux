@@ -25,7 +25,7 @@ class CodexTitleTests(unittest.TestCase):
             **os.environ,
             "CODEX_HOME": str(self.state_dir),
             "CODEX_THREAD_ID": "environment-thread",
-            "WEZMUX_TTY": str(self.output),
+            "WEZMUX_HOOK_TTY": str(self.output),
         }
 
     def database(self, name=None, title="Fix workcard titles", *, legacy=False,
@@ -120,7 +120,7 @@ class CodexTitleTests(unittest.TestCase):
         try:
             result = subprocess.run(
                 [str(HOOK_DIR / script)], input=json.dumps(payload), text=True,
-                env={**self.env, "WEZMUX_TTY": os.ttyname(slave)},
+                env={**self.env, "WEZMUX_HOOK_TTY": os.ttyname(slave)},
                 capture_output=True, timeout=5,
             )
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
@@ -136,7 +136,7 @@ class CodexTitleTests(unittest.TestCase):
         proc = subprocess.Popen(
             [str(HOOK_DIR / "update-title.sh"), "--hook"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**self.env, "WEZMUX_TTY": os.ttyname(slave)}, text=True,
+            env={**self.env, "WEZMUX_HOOK_TTY": os.ttyname(slave)}, text=True,
         )
         try:
             proc.stdin.write(json.dumps({"session_id": "test-thread", "prompt": "yes"}))

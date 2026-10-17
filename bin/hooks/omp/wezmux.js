@@ -1,6 +1,10 @@
 import { closeSync, openSync, writeSync } from "node:fs";
 
-const ttyPath = process.env.WEZMUX_TTY || "/dev/tty";
+// The extension runs inside omp, so its own controlling terminal is the pane.
+// Never use an inherited pane-tty variable: a process started from another
+// pane (tmux server, daemon) would carry that pane's tty instead, see
+// bin/hooks/lib/agent-tty.sh.  WEZMUX_HOOK_TTY is for tests.
+const ttyPath = process.env.WEZMUX_HOOK_TTY || "/dev/tty";
 let tty;
 
 function writeOsc(payload) {

@@ -4,6 +4,9 @@
 
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/../lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 tool_name=""
 thread_id="${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}"
 if command -v jq >/dev/null 2>&1; then
@@ -13,11 +16,11 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-"$script_dir/update-title.sh" "$thread_id" "${WEZMUX_TTY:-/dev/tty}" >/dev/null 2>&1 || true
+"$script_dir/update-title.sh" "$thread_id" "$agent_tty" >/dev/null 2>&1 || true
 
 if [ -n "$tool_name" ]; then
     # Strip escape/BEL to prevent OSC injection
     tool_name=$(printf '%s' "$tool_name" | tr -d '\007\033')
-    printf '\033]7777;tool;%s\007' "$tool_name" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+    printf '\033]7777;tool;%s\007' "$tool_name" > "$agent_tty" 2>/dev/null || true
 fi
 exit 0

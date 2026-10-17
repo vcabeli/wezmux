@@ -21,6 +21,10 @@ pub struct AgentPaneStatus {
     /// Preserved across status transitions so the sidebar keeps showing
     /// useful output even after the agent goes idle.
     pub last_working_message: Option<String>,
+    /// The agent left Working without having sent a message, so the next
+    /// message is the turn's output: every integration reports `idle` before
+    /// the turn's output (Claude/Codex Stop hooks, the omp extension).
+    pub awaiting_output: bool,
     /// Number of subagents currently running within this agent session
     /// (e.g. Claude Code's parallel Agent tool invocations).
     pub subagent_count: u32,
@@ -61,6 +65,7 @@ impl AgentStatusStore {
                 message: None,
                 tool: None,
                 last_working_message: None,
+                awaiting_output: false,
                 subagent_count: 0,
                 background_tasks_count: 0,
                 session_crons_count: 0,
@@ -100,13 +105,17 @@ impl AgentStatusStore {
         let mut changed = is_new;
 
         // When leaving Working, snapshot the current message as the
-        // last working output so the sidebar shows it while idle.
+        // last working output so the sidebar shows it while idle.  With no
+        // message yet, the output is the next message: take that instead,
+        // or an older output would outrank this turn's for good.
         if matches!(entry.status, AgentStatus::Working) && !matches!(status, AgentStatus::Working) {
             if let Some(msg) = entry.message.clone() {
                 if entry.last_working_message.as_ref() != Some(&msg) {
                     entry.last_working_message = Some(msg);
                     changed = true;
                 }
+            } else {
+                entry.awaiting_output = true;
             }
         }
         // When entering Working, clear the current message so stale
@@ -114,6 +123,7 @@ impl AgentStatusStore {
         // Keep last_working_message as a fallback preview until new
         // output arrives — clearing it causes blank sidebar cards.
         if matches!(status, AgentStatus::Working) && !matches!(entry.status, AgentStatus::Working) {
+            entry.awaiting_output = false;
             if entry.message.is_some() {
                 entry.message = None;
                 changed = true;
@@ -132,7 +142,14 @@ impl AgentStatusStore {
 
     pub fn update_message(&mut self, pane_id: PaneId, message: String) {
         let (entry, is_new) = self.entry_mut(pane_id, AgentStatus::Working);
-        let changed = is_new || entry.message.as_deref() != Some(message.as_str());
+        let mut changed = is_new || entry.message.as_deref() != Some(message.as_str());
+        if entry.awaiting_output {
+            entry.awaiting_output = false;
+            if entry.last_working_message.as_deref() != Some(message.as_str()) {
+                entry.last_working_message = Some(message.clone());
+                changed = true;
+            }
+        }
         entry.message = Some(message);
         entry.updated = Instant::now();
         if changed {
@@ -528,6 +545,33 @@ mod test {
         assert_eq!(
             status.last_working_message.as_deref(),
             Some("Useful output")
+        );
+    }
+
+    #[test]
+    fn output_sent_after_idle_replaces_stale_lwm() {
+        let mut store = AgentStatusStore::default();
+        // A stray message while Working (e.g. a notification) became lwm.
+        store.update_status(1, AgentStatus::Working);
+        store.update_message(1, "stray".to_string());
+        store.update_status(1, AgentStatus::Idle);
+
+        // Every later turn reports idle first, then its output (Stop hook).
+        for output in ["first answer", "second answer"] {
+            store.update_status(1, AgentStatus::Working);
+            store.update_status(1, AgentStatus::Idle);
+            store.update_message(1, output.to_string());
+            assert_eq!(
+                store.get(1).unwrap().last_working_message.as_deref(),
+                Some(output)
+            );
+        }
+
+        // A generic label after the output still doesn't replace it.
+        store.update_message(1, "Claude is waiting for your input".to_string());
+        assert_eq!(
+            store.get(1).unwrap().last_working_message.as_deref(),
+            Some("second answer")
         );
     }
 

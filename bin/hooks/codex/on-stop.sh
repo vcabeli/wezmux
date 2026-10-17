@@ -4,6 +4,9 @@
 
 input=$(cat 2>/dev/null)
 
+. "$(dirname "$0")/../lib/agent-tty.sh"
+agent_tty=$(wezmux_agent_tty) || exit 0
+
 last_message=""
 thread_id="${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}"
 if command -v jq >/dev/null 2>&1; then
@@ -13,7 +16,7 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-"$script_dir/update-title.sh" "$thread_id" "${WEZMUX_TTY:-/dev/tty}" >/dev/null 2>&1 || true
+"$script_dir/update-title.sh" "$thread_id" "$agent_tty" >/dev/null 2>&1 || true
 
 msg="Codex finished"
 
@@ -27,8 +30,8 @@ fi
 preview=$(printf '%s' "$preview" | tr -d '\007\033')
 
 # Structured status for agent store
-printf '\033]7777;status;idle\007' > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
-printf '\033]7777;message;%s\007' "$preview" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]7777;status;idle\007' > "$agent_tty" 2>/dev/null || true
+printf '\033]7777;message;%s\007' "$preview" > "$agent_tty" 2>/dev/null || true
 # Notification store
-printf '\033]9;%s\007' "$msg" > "${WEZMUX_TTY:-/dev/tty}" 2>/dev/null || true
+printf '\033]9;%s\007' "$msg" > "$agent_tty" 2>/dev/null || true
 exit 0

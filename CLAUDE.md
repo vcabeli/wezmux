@@ -194,6 +194,7 @@ Hit-testing via `UIItemType` variants: `SidebarWorkspace`, `SidebarNewWorkspace`
 - **Performance**: Git/PR/port polling must never block the render thread (background thread + cache pattern)
 - **Memory**: Notification store capped at 1000 entries
 - **Hooks**: Each hook invocation is a separate process — no shared state between hook calls (use temp files for coordination, e.g. subagent counting)
+- **Hook output**: Hooks write OSC to the tty from `bin/hooks/lib/agent-tty.sh` (the agent's own terminal, found from process ancestry), never to `/dev/tty` (Claude runs hooks detached) or an env var naming the pane tty (inherited by tmux servers and the Codex app-server daemon, so it routes to whichever pane started them)
 
 ## Conventions
 
