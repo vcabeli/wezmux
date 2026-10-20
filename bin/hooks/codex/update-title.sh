@@ -15,7 +15,7 @@ if [ "$1" = "--hook" ]; then
     payload_thread_id=$(printf '%s' "$input" | jq -r '.session_id // .thread_id // empty' 2>/dev/null)
     [ -n "$payload_thread_id" ] && thread_id="$payload_thread_id"
     prompt=$(printf '%s' "$input" | jq -r '.prompt | strings' 2>/dev/null)
-    tty_path=$(wezmux_agent_tty) || exit 0
+    tty_path=$(wezmux_agent_tty "$input") || exit 0
     mode="${2:---wait}"
 else
     thread_id="$1"

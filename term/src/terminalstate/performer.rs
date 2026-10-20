@@ -741,7 +741,8 @@ impl<'a> Performer<'a> {
         match &osc {
             OperatingSystemCommand::SystemNotification(_)
             | OperatingSystemCommand::RxvtExtension(_)
-            | OperatingSystemCommand::WezmuxStatus { .. } => {
+            | OperatingSystemCommand::WezmuxStatus { .. }
+            | OperatingSystemCommand::AgentState { .. } => {
                 log::info!("osc_dispatch: {:?}", osc);
             }
             _ => {}
@@ -953,6 +954,24 @@ impl<'a> Performer<'a> {
                 log::info!("WezmuxStatus: event={event:?} data={data:?}");
                 if let Some(handler) = self.alert_handler.as_mut() {
                     handler.alert(Alert::WezmuxStatus { event, data });
+                }
+            }
+            OperatingSystemCommand::AgentState { state, .. } => {
+                // Codex reports its own state on its own terminal, which keeps
+                // working when its hooks run in the app-server daemon and
+                // cannot tell which pane they belong to.
+                let (event, data) = match state.as_str() {
+                    "working" => ("status", Some("working")),
+                    "idle" => ("status", Some("idle")),
+                    "blocked" | "waiting" => ("status", Some("needs_input")),
+                    "clear" => ("clear", None),
+                    _ => return,
+                };
+                if let Some(handler) = self.alert_handler.as_mut() {
+                    handler.alert(Alert::WezmuxStatus {
+                        event: event.to_string(),
+                        data: data.map(str::to_string),
+                    });
                 }
             }
             OperatingSystemCommand::CurrentWorkingDirectory(url) => {

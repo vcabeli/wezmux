@@ -50,7 +50,16 @@ pub enum OperatingSystemCommand {
     ResetColors(Vec<u8>),
     RxvtExtension(Vec<String>),
     ConEmuProgress(Progress),
-    WezmuxStatus { event: String, data: Option<String> },
+    WezmuxStatus {
+        event: String,
+        data: Option<String>,
+    },
+    /// Agent state reported by the agent itself (OSC 7501), e.g. Codex's
+    /// `state=working:app=codex`; `state=clear` when it exits.
+    AgentState {
+        state: String,
+        app: Option<String>,
+    },
 
     Unspecified(Vec<Vec<u8>>),
 }
@@ -397,6 +406,26 @@ impl OperatingSystemCommand {
                 };
                 Ok(OperatingSystemCommand::WezmuxStatus { event, data })
             }
+            AgentState => {
+                let params = osc[1..]
+                    .iter()
+                    .map(|s| String::from_utf8_lossy(s))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                let mut state = None;
+                let mut app = None;
+                for field in params.split(':') {
+                    match field.split_once('=') {
+                        Some(("state", v)) => state = Some(v.to_string()),
+                        Some(("app", v)) => app = Some(v.to_string()),
+                        _ => {}
+                    }
+                }
+                match state {
+                    Some(state) => Ok(OperatingSystemCommand::AgentState { state, app }),
+                    None => bail!("OSC 7501 without a state"),
+                }
+            }
             FinalTermSemanticPrompt => self::FinalTermSemanticPrompt::parse(osc)
                 .map(OperatingSystemCommand::FinalTermSemanticPrompt),
             ChangeColorNumber => Self::parse_change_color_number(osc),
@@ -534,6 +563,7 @@ osc_entries!(
     ResetHighlightForegroundColor = "119",
     RxvtProprietary = "777",
     WezmuxStatus = "7777",
+    AgentState = "7501",
     FinalTermSemanticPrompt = "133",
     ITermProprietary = "1337",
     /// Here the "Sun" suffix comes from the table in
@@ -653,6 +683,12 @@ impl Display for OperatingSystemCommand {
                 write!(f, "7777;{}", event)?;
                 if let Some(d) = data {
                     write!(f, ";{}", d)?;
+                }
+            }
+            AgentState { state, app } => {
+                write!(f, "7501;state={}", state)?;
+                if let Some(app) = app {
+                    write!(f, ":app={}", app)?;
                 }
             }
         };
@@ -1511,6 +1547,27 @@ mod test {
             OperatingSystemCommand::WezmuxStatus {
                 event: "title".to_string(),
                 data: Some("Fix auth; update tests".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn agent_state() {
+        assert_eq!(
+            parse(
+                &["7501", "state=working:app=codex"],
+                "\x1b]7501;state=working:app=codex\x1b\\"
+            ),
+            OperatingSystemCommand::AgentState {
+                state: "working".to_string(),
+                app: Some("codex".to_string()),
+            }
+        );
+        assert_eq!(
+            parse(&["7501", "state=clear"], "\x1b]7501;state=clear\x1b\\"),
+            OperatingSystemCommand::AgentState {
+                state: "clear".to_string(),
+                app: None,
             }
         );
     }

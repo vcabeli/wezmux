@@ -5,7 +5,7 @@
 input=$(cat 2>/dev/null)
 
 . "$(dirname "$0")/../lib/agent-tty.sh"
-agent_tty=$(wezmux_agent_tty) || exit 0
+agent_tty=$(wezmux_agent_tty "$input") || exit 0
 
 last_message=""
 thread_id="${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}"
