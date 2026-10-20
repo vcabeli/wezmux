@@ -140,6 +140,7 @@ luahelper = { path = "luahelper" }
 maplit = "1.0"
 memmap2 = "0.9"
 memmem = "0.1"
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 metrics = "0.23"
 miniz_oxide = "0.7"
 mio = "0.8"
@@ -186,6 +187,7 @@ rcgen = "0.12"
 regex = "1"
 reqwest = "0.12"
 resize = "0.5"
+resvg = { version = "0.47", default-features = false, features = ["text"] }
 rstest = "0.21"
 rusqlite = "0.32"
 serde = {version="1.0", default-features=false, features = ["derive"]}

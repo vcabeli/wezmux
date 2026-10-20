@@ -62,6 +62,7 @@ lfucache.workspace = true
 libc.workspace = true
 log.workspace = true
 luahelper.workspace = true
+mermaid-rs-renderer.workspace = true
 metrics.workspace = true
 mlua = {workspace=true, features=["send", "serialize"]}
 mux-lua.workspace = true
@@ -76,6 +77,7 @@ rangeset.workspace = true
 ratelim.workspace = true
 rayon.workspace = true
 regex.workspace = true
+resvg.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 serde_json.workspace = true
 shlex.workspace = true

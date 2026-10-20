@@ -72,6 +72,7 @@ pub mod background;
 pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
+pub mod diagram;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
@@ -415,6 +416,7 @@ pub struct TermWindow {
     show_tab_bar: bool,
     show_scroll_bar: bool,
     sidebar: sidebar::SidebarState,
+    diagrams: diagram::DiagramState,
     tab_bar: TabBarState,
     fancy_tab_bar: Option<box_model::ComputedElement>,
     pub right_status: String,
@@ -752,6 +754,7 @@ impl TermWindow {
             show_tab_bar,
             show_scroll_bar: config.enable_scroll_bar,
             sidebar: sidebar::SidebarState::new(&config),
+            diagrams: diagram::DiagramState::default(),
             tab_bar: TabBarState::default(),
             fancy_tab_bar: None,
             right_status: String::new(),

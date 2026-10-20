@@ -35,6 +35,9 @@ No setup is required.
 If a caller supplies its own `--settings` option, the wrapper leaves it
 unchanged instead of replacing it.
 
+The wrapper also appends a one-line system prompt telling Claude it can draw
+[inline diagrams](inline-diagrams.md). Set `WEZMUX_DIAGRAMS=0` to leave it out.
+
 ### What each hook does
 
 | Hook | Event | Emits |
@@ -83,6 +86,10 @@ saved, the first prompt takes precedence over follow-up prompts, keeping the
 heading stable. Hooks identify the conversation by `session_id` and emit
 `OSC 7777;title` directly to the card, independently of the terminal tab title.
 
+Another session-start hook tells Codex it can draw
+[inline diagrams](inline-diagrams.md), using the hook's `additionalContext`.
+Set `WEZMUX_DIAGRAMS=0` to leave it out.
+
 ## Writing hooks for other agents
 
 Any agent that supports lifecycle hooks can integrate with Wezmux by emitting [OSC 7777](osc7777.md) sequences. The minimum integration is:
@@ -121,3 +128,4 @@ The sidebar shows agent status with distinct visual indicators:
 - [OSC 7777](osc7777.md) -- the escape sequence protocol reference
 - [Notifications](notifications.md) -- how OSC 9 notifications work
 - [Sidebar](sidebar.md) -- where agent status is displayed
+- [Inline diagrams](inline-diagrams.md) -- Mermaid between `<wezmux_diagram>` tags drawn in place

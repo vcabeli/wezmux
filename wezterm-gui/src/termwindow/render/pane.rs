@@ -311,6 +311,10 @@ impl crate::TermWindow {
             pos.pane
                 .apply_hyperlinks(stable_range.clone(), &self.config.hyperlink_rules);
 
+            // Rows under a rendered diagram show the diagram instead of its source.
+            let diagrams = self.diagrams_for_pane(pos, &stable_range, &palette);
+            let hidden_rows: Vec<_> = diagrams.iter().map(|d| d.rows.clone()).collect();
+
             struct LineRender<'a, 'b> {
                 term_window: &'a mut crate::TermWindow,
                 selrange: Option<SelectionRange>,
@@ -334,6 +338,7 @@ impl crate::TermWindow {
                 filled_box: TextureRect,
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
+                hidden_rows: &'a [std::ops::Range<StableRowIndex>],
                 error: Option<anyhow::Error>,
             }
 
@@ -364,6 +369,7 @@ impl crate::TermWindow {
                 filled_box,
                 window_is_transparent,
                 layers,
+                hidden_rows: &hidden_rows,
                 error: None,
             };
 
@@ -557,6 +563,10 @@ impl crate::TermWindow {
             impl<'a, 'b> WithPaneLines for LineRender<'a, 'b> {
                 fn with_lines_mut(&mut self, stable_top: StableRowIndex, lines: &mut [&mut Line]) {
                     for (line_idx, line) in lines.iter().enumerate() {
+                        let row = stable_top + line_idx as StableRowIndex;
+                        if self.hidden_rows.iter().any(|rows| rows.contains(&row)) {
+                            continue;
+                        }
                         if let Err(err) = self.render_line(stable_top, line_idx, line) {
                             self.error.replace(err);
                             return;
@@ -568,6 +578,19 @@ impl crate::TermWindow {
             pos.pane.with_lines_mut(stable_range.clone(), &mut render);
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling with_lines_mut");
+            }
+
+            let pane_top_px = top_pixel_y + pos.top as f32 * cell_height;
+            for diagram in &diagrams {
+                self.paint_diagram(
+                    layers,
+                    diagram,
+                    stable_range.start,
+                    dims.viewport_rows,
+                    pane_top_px,
+                    left_pixel_x,
+                )
+                .context("paint_diagram")?;
             }
         }
 
