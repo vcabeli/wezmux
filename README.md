@@ -32,6 +32,8 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 - **Codex** — run `make install-codex-hooks` to set up hooks in `~/.codex/hooks.json`
 - Status, tool activity, input/approval waits, and output previews shown in the sidebar
 
+**Inline diagrams:** Mermaid that agents print between `<wezmux_diagram>` tags is drawn in place by the GPU renderer, in the terminal's own font and colors ([details](docs/inline-diagrams.md)).
+
 **OSC 7777 agent status protocol** for structured status reporting:
 ```
 \e]7777;status;working;Running tests\a
