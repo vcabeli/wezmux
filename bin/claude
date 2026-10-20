@@ -110,18 +110,28 @@ ENDJSON
 # Replace placeholder with actual hook dir path
 SETTINGS_JSON="${SETTINGS_JSON//HOOK_DIR_PLACEHOLDER/$HOOK_DIR}"
 
-# Check if user already passed --settings
+# Wezmux draws Mermaid between these tags in place of the source text
+# (wezterm-gui/src/termwindow/diagram.rs). Set WEZMUX_DIAGRAMS=0 to opt out.
+DIAGRAM_PROMPT='You are running inside Wezmux, which draws Mermaid diagrams inline. When a diagram would help, put Mermaid source between a line <wezmux_diagram> and a line </wezmux_diagram> instead of a code fence. It is drawn in the rows its source occupies, so keep it compact and prefer left-to-right layouts (flowchart LR).'
+
+# Check what the user already passed
 has_settings=false
+wants_diagrams="${WEZMUX_DIAGRAMS:-1}"
 for arg in "$@"; do
-    if [ "$arg" = "--settings" ]; then
-        has_settings=true
-        break
-    fi
+    case "$arg" in
+        --settings) has_settings=true ;;
+        # Printed output may be piped elsewhere, and a second system prompt
+        # flag would conflict with the user's.
+        -p|--print|--system-prompt|--append-system-prompt) wants_diagrams=0 ;;
+    esac
 done
 
-if [ "$has_settings" = true ]; then
-    # User has their own settings; don't override
-    exec "$REAL_CLAUDE" "$@"
-else
-    exec "$REAL_CLAUDE" --settings "$SETTINGS_JSON" "$@"
+extra_args=()
+if [ "$has_settings" = false ]; then
+    extra_args+=(--settings "$SETTINGS_JSON")
 fi
+if [ "$wants_diagrams" = 1 ]; then
+    extra_args+=(--append-system-prompt "$DIAGRAM_PROMPT")
+fi
+
+exec "$REAL_CLAUDE" ${extra_args[@]+"${extra_args[@]}"} "$@"

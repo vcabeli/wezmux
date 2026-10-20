@@ -95,6 +95,18 @@ impl LoadedFont {
         self.id
     }
 
+    /// The primary font's family name and data, and the size it is drawn at
+    /// in device pixels, for drawing text outside the shaper that matches it.
+    pub fn primary_face(&self) -> Option<(String, locator::FontDataHandle, f64)> {
+        let handles = self.handles.borrow();
+        let font = handles.first()?;
+        Some((
+            font.names().family.clone(),
+            font.handle.clone(),
+            self.font_size * self.dpi as f64 / 72.0,
+        ))
+    }
+
     fn insert_fallback_handles(&self, extra_handles: Vec<ParsedFont>) -> anyhow::Result<bool> {
         let mut loaded = false;
         {

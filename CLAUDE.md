@@ -38,6 +38,7 @@ cargo test -p mux            # Test a specific crate
 | **Claude wrapper** | `bin/claude` | Auto-injects hooks into Claude Code via `--settings` |
 | **Hook scripts** | `bin/hooks/on-*.sh` | Emit OSC 7777 + OSC 9 on agent lifecycle events |
 | **PATH injection** | `mux/src/wezmux_zdotdir.rs` | Keeps `bin/` on PATH despite macOS `path_helper` |
+| **Inline diagrams** | `wezterm-gui/src/termwindow/diagram.rs` | Draws Mermaid between `<wezmux_diagram>` tags in place of its source (`docs/inline-diagrams.md`) |
 
 ### Data flow: Agent status
 

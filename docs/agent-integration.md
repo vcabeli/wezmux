@@ -35,6 +35,9 @@ No setup is required.
 If a caller supplies its own `--settings` option, the wrapper leaves it
 unchanged instead of replacing it.
 
+The wrapper also appends a one-line system prompt telling Claude it can draw
+[inline diagrams](inline-diagrams.md). Set `WEZMUX_DIAGRAMS=0` to leave it out.
+
 ### What each hook does
 
 | Hook | Event | Emits |
@@ -121,3 +124,4 @@ The sidebar shows agent status with distinct visual indicators:
 - [OSC 7777](osc7777.md) -- the escape sequence protocol reference
 - [Notifications](notifications.md) -- how OSC 9 notifications work
 - [Sidebar](sidebar.md) -- where agent status is displayed
+- [Inline diagrams](inline-diagrams.md) -- Mermaid between `<wezmux_diagram>` tags drawn in place
