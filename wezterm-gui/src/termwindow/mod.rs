@@ -71,8 +71,8 @@ use wezterm_term::{Alert, Progress, StableRowIndex, TerminalConfiguration, Termi
 pub mod background;
 pub mod box_model;
 pub mod charselect;
-pub mod diagram;
 pub mod clipboard;
+pub mod diagram;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
