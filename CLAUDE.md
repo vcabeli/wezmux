@@ -114,7 +114,7 @@ ESC ] 7777 ; EVENT ; DATA BEL
 | `session_crons` | count (integer) | Shows "N scheduled tasks" line (`/loop`, `CronCreate`) |
 | `clear` | (none) | Resets to idle, preserves last message |
 
-Codex also reports its own state with `ESC ] 7501 ; state=working|idle|blocked[:app=codex] ST` (`state=clear` on exit). The performer maps it onto the same `status`/`clear` events (`blocked` → `needs_input`). It is the reliable status source for Codex, because Codex's hooks usually run in its app-server daemon.
+Codex also reports its own state with `ESC ] 7501 ; state=working|idle|blocked[:app=codex] ST` (`state=clear` on exit). The performer maps it onto the same `status`/`clear` events (`blocked` → `needs_input`). It is the reliable status source for Codex, because a daemon-attached Codex's hooks run in its app-server daemon.
 
 State machine guards in `AgentStatusStore`:
 - `needs_input` is sticky for 3 seconds (guards Stop/Notification hook race)
@@ -196,7 +196,7 @@ Hit-testing via `UIItemType` variants: `SidebarWorkspace`, `SidebarNewWorkspace`
 - **Performance**: Git/PR/port polling must never block the render thread (background thread + cache pattern)
 - **Memory**: Notification store capped at 1000 entries
 - **Hooks**: Each hook invocation is a separate process — no shared state between hook calls (use temp files for coordination, e.g. subagent counting)
-- **Hook output**: Hooks write OSC to the tty from `bin/hooks/lib/agent-tty.sh` (the agent's own terminal, found from process ancestry), never to `/dev/tty` (Claude runs hooks detached) or an env var naming the pane tty (inherited by tmux servers and the Codex app-server daemon, so it routes to whichever pane started them). Codex runs every TUI's hooks in its app-server daemon, which has no tty: `wezmux_codex_daemon_tty` resolves those from the payload, and reports only for a `codex-tui` thread whose cwd matches exactly one Codex TUI process.
+- **Hook output**: Hooks write OSC to the tty from `bin/hooks/lib/agent-tty.sh` (the agent's own terminal, found from process ancestry), never to `/dev/tty` (Claude runs hooks detached) or an env var naming the pane tty (inherited by tmux servers and the Codex app-server daemon, so it routes to whichever pane started them). A plain `codex` attaches to the shared app-server daemon and its hooks run there, with no tty (`--no-daemon` or any `-c` override runs in-process, where the ancestry walk works): `wezmux_codex_daemon_tty` resolves those from the payload, and reports only for a `codex-tui` thread whose cwd matches exactly one Codex TUI process.
 
 ## Conventions
 
