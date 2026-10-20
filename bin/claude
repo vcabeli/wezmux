@@ -110,9 +110,8 @@ ENDJSON
 # Replace placeholder with actual hook dir path
 SETTINGS_JSON="${SETTINGS_JSON//HOOK_DIR_PLACEHOLDER/$HOOK_DIR}"
 
-# Wezmux draws Mermaid between these tags in place of the source text
-# (wezterm-gui/src/termwindow/diagram.rs). Set WEZMUX_DIAGRAMS=0 to opt out.
-DIAGRAM_PROMPT='You are running inside Wezmux, which draws Mermaid diagrams inline. When a diagram would help, put Mermaid source between a line <wezmux_diagram> and a line </wezmux_diagram> instead of a code fence. It is drawn in the rows its source occupies, so keep it compact and prefer left-to-right layouts (flowchart LR).'
+# Advertise inline diagrams (WEZMUX_DIAGRAM_PROMPT)
+. "$HOOK_DIR/lib/diagram-prompt.sh"
 
 # Check what the user already passed
 has_settings=false
@@ -131,7 +130,7 @@ if [ "$has_settings" = false ]; then
     extra_args+=(--settings "$SETTINGS_JSON")
 fi
 if [ "$wants_diagrams" = 1 ]; then
-    extra_args+=(--append-system-prompt "$DIAGRAM_PROMPT")
+    extra_args+=(--append-system-prompt "$WEZMUX_DIAGRAM_PROMPT")
 fi
 
 exec "$REAL_CLAUDE" ${extra_args[@]+"${extra_args[@]}"} "$@"

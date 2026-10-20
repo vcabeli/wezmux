@@ -13,11 +13,14 @@ flowchart LR
 </wezmux_diagram>
 ```
 
-The agent needs one line of prompt to know this is available. The `claude` wrapper appends it through `--append-system-prompt`:
+The agent needs one line of prompt to know this is available. The text lives in `bin/hooks/lib/diagram-prompt.sh`:
 
 > You are running inside Wezmux, which draws Mermaid diagrams inline. When a diagram would help, put Mermaid source between a line `<wezmux_diagram>` and a line `</wezmux_diagram>` instead of a code fence. It is drawn in the rows its source occupies, so keep it compact and prefer left-to-right layouts (flowchart LR).
 
-Set `WEZMUX_DIAGRAMS=0` to leave it out. The wrapper also skips it for `-p`/`--print`, because printed output may be piped elsewhere, and when the caller passes its own `--system-prompt` or `--append-system-prompt`.
+- **Claude Code.** The `claude` wrapper appends it through `--append-system-prompt`. It skips it for `-p`/`--print`, because printed output may be piped elsewhere, and when the caller passes its own `--system-prompt` or `--append-system-prompt`.
+- **Codex.** A `SessionStart` hook (`bin/hooks/codex/on-session-start.sh`, installed by `make install-codex-hooks`) returns it as `additionalContext`. Codex asks you to trust the new hook once. The hook only has its environment to go on. A Codex attached to the app-server daemon runs hooks with the environment of the pane that started the daemon, so a daemon started in Wezmux also tells sessions running in other terminals.
+
+Set `WEZMUX_DIAGRAMS=0` to leave it out for both.
 
 ## Why a tag, and not a ```` ```mermaid ```` fence
 
@@ -74,5 +77,5 @@ All of this lives in `wezterm-gui/src/termwindow/diagram.rs`. `render/pane.rs` h
   3. Accept smaller text for tall diagrams.
 - **Dependency weight.** Wezmux's own code is about 650 lines plus tests. The renderer crate is about 58k lines (usvg about 19k, resvg about 5k), adding 29 crates to the lock file, all pure Rust and MIT/Apache. Release binary growth is not measured yet. If that is too much, the same module could call an `mmdr` binary out-of-process instead.
 - **Renderer fidelity.** mermaid-rs-renderer is in early development and does not match mermaid-js in every case. Source it can't parse stays text.
-- **Other agents.** Codex and Oh My Pi don't get the prompt line yet. Codex could take it through `AGENTS.md` or `developer_instructions`. Oh My Pi already has a Wezmux extension that can add it.
+- **Other agents.** Oh My Pi doesn't get the prompt line yet. Its Wezmux extension could add it.
 - **Config.** There is no `config.diagrams` toggle yet; detection is always on, and only an explicit tag triggers it.

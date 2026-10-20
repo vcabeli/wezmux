@@ -86,6 +86,10 @@ saved, the first prompt takes precedence over follow-up prompts, keeping the
 heading stable. Hooks identify the conversation by `session_id` and emit
 `OSC 7777;title` directly to the card, independently of the terminal tab title.
 
+Another session-start hook tells Codex it can draw
+[inline diagrams](inline-diagrams.md), using the hook's `additionalContext`.
+Set `WEZMUX_DIAGRAMS=0` to leave it out.
+
 ## Writing hooks for other agents
 
 Any agent that supports lifecycle hooks can integrate with Wezmux by emitting [OSC 7777](osc7777.md) sequences. The minimum integration is:

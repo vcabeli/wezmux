@@ -14,13 +14,13 @@ mkdir -p "$CODEX_DIR"
 HOOKS_JSON="$CODEX_DIR/hooks.json"
 
 # Our hook entries as JSON fragments
-WEZMUX_SESSION_START='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/update-title.sh --hook --once","timeout":5}]}'
+WEZMUX_SESSION_START='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/update-title.sh --hook --once","timeout":5},{"type":"command","command":"'"$HOOK_DIR"'/on-session-start.sh","timeout":5}]}'
 WEZMUX_PROMPT_SUBMIT='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-prompt-submit.sh","timeout":5},{"type":"command","command":"'"$HOOK_DIR"'/update-title.sh --hook","timeout":70,"async":true}]}'
 WEZMUX_STOP='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-stop.sh","timeout":5}]}'
 WEZMUX_PRE_TOOL='{"hooks":[{"type":"command","command":"'"$HOOK_DIR"'/on-pre-tool-use.sh","timeout":5}]}'
 
 is_wezmux_hook() {
-    echo "$1" | jq -e '.. | .command? // empty | test("wezmux|on-prompt-submit\\.sh|on-stop\\.sh|on-pre-tool-use\\.sh|update-title\\.sh")' >/dev/null 2>&1
+    echo "$1" | jq -e '.. | .command? // empty | test("wezmux|on-prompt-submit\\.sh|on-stop\\.sh|on-pre-tool-use\\.sh|on-session-start\\.sh|update-title\\.sh")' >/dev/null 2>&1
 }
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -42,7 +42,7 @@ if [ -f "$HOOKS_JSON" ] && [ -s "$HOOKS_JSON" ]; then
         # Helper: keep entries whose commands do not match wezmux paths
         def remove_wezmux:
             [ .[]? | select(
-                (.hooks // []) | all(.command | test("wezmux|on-prompt-submit\\.sh|on-stop\\.sh|on-pre-tool-use\\.sh|update-title\\.sh") | not)
+                (.hooks // []) | all(.command | test("wezmux|on-prompt-submit\\.sh|on-stop\\.sh|on-pre-tool-use\\.sh|on-session-start\\.sh|update-title\\.sh") | not)
             ) ];
 
         .hooks.SessionStart = ((.hooks.SessionStart // []) | remove_wezmux) + [$session] |
