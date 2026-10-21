@@ -4,7 +4,7 @@
 
 # Wezmux
 
-A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows. Wezmux focuses on running multiple coding agents side-by-side and making each workspace's state visible at a glance.
+A fork of [WezTerm](https://github.com/wezterm/wezterm) that adds workspace management for multi-agent terminal workflows like [cmux](https://cmux.com/). Wezmux focuses on running multiple coding agents side-by-side and making each workspace's state visible at a glance.
 
 ![Wezmux screenshot](assets/screenshot.png)
 
