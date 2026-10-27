@@ -75,6 +75,10 @@ portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
 rangeset.workspace = true
 ratelim.workspace = true
+ratex-layout.workspace = true
+ratex-parser.workspace = true
+ratex-svg.workspace = true
+ratex-types.workspace = true
 rayon.workspace = true
 regex.workspace = true
 resvg.workspace = true

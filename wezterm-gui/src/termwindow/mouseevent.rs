@@ -1113,6 +1113,9 @@ impl super::TermWindow {
             .get_viewport(pane.pane_id())
             .unwrap_or(dims.physical_top)
             + row as StableRowIndex;
+        // Rows with inline math are drawn collapsed around it; point at the
+        // grid cell that is drawn under the mouse.
+        let column = self.diagrams.grid_col(pane.pane_id(), stable_row, column);
 
         self.pane_state(pane.pane_id())
             .mouse_terminal_coords

@@ -13,7 +13,7 @@ flowchart LR
 </wezmux_diagram>
 ```
 
-The agent needs one line of prompt to know this is available. The text lives in `bin/hooks/lib/diagram-prompt.sh`:
+The agent needs one line of prompt to know this is available. The text lives in `bin/hooks/lib/inline-prompt.sh`, which also holds the [math](inline-math.md) prompt:
 
 > You are running inside Wezmux, which draws Mermaid diagrams inline. When a diagram would help, put Mermaid source between a line `<wezmux_diagram>` and a line `</wezmux_diagram>` instead of a code fence. It is drawn in the rows its source occupies, so keep it compact and prefer left-to-right layouts (flowchart LR).
 

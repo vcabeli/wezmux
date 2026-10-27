@@ -39,6 +39,7 @@ cargo test -p mux            # Test a specific crate
 | **Hook scripts** | `bin/hooks/on-*.sh` | Emit OSC 7777 + OSC 9 on agent lifecycle events |
 | **PATH injection** | `mux/src/wezmux_zdotdir.rs` | Keeps `bin/` on PATH despite macOS `path_helper` |
 | **Inline diagrams** | `wezterm-gui/src/termwindow/diagram.rs` | Draws Mermaid between `<wezmux_diagram>` tags in place of its source (`docs/inline-diagrams.md`) |
+| **Inline math** | `wezterm-gui/src/termwindow/math.rs` | Draws LaTeX between `$…$` / `$$…$$` in place of its source, via RaTeX; shares diagram.rs's scan, cache and painting (`docs/inline-math.md`) |
 
 ### Data flow: Agent status
 
