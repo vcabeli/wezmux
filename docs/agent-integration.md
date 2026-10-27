@@ -35,8 +35,9 @@ No setup is required.
 If a caller supplies its own `--settings` option, the wrapper leaves it
 unchanged instead of replacing it.
 
-The wrapper also appends a one-line system prompt telling Claude it can draw
-[inline diagrams](inline-diagrams.md). Set `WEZMUX_DIAGRAMS=0` to leave it out.
+The wrapper also appends a short system prompt telling Claude it can draw
+[inline diagrams](inline-diagrams.md) and [math](inline-math.md). Set
+`WEZMUX_DIAGRAMS=0` or `WEZMUX_MATH=0` to leave either part out.
 
 ### What each hook does
 
@@ -87,8 +88,9 @@ heading stable. Hooks identify the conversation by `session_id` and emit
 `OSC 7777;title` directly to the card, independently of the terminal tab title.
 
 Another session-start hook tells Codex it can draw
-[inline diagrams](inline-diagrams.md), using the hook's `additionalContext`.
-Set `WEZMUX_DIAGRAMS=0` to leave it out.
+[inline diagrams](inline-diagrams.md) and [math](inline-math.md), using the
+hook's `additionalContext`. Set `WEZMUX_DIAGRAMS=0` or `WEZMUX_MATH=0` to leave
+either part out.
 
 ## Writing hooks for other agents
 

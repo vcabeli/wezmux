@@ -14,8 +14,13 @@
 //! Rendering (mermaid-rs-renderer → SVG → resvg) happens off the GUI thread at
 //! the exact pixel size of the target rectangle, in the terminal's font and
 //! colors, and is redone when that size or the palette changes.
+//!
+//! LaTeX math (`math.rs`) goes through the same scan, cache and render
+//! thread: `$$` display math as a block like a diagram, `$…$` inline math
+//! as a span of cells within a row.
 
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
+use crate::termwindow::math::{self, PlacedInline};
 use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::TermWindowNotif;
 use ::window::bitmaps::{TextureCoord, TextureRect, TextureSize};
@@ -46,7 +51,9 @@ const MAX_BLOCK_ROWS: usize = 200;
 /// Below this the text would be too small to read, so the source is kept.
 const MIN_SCALE: f32 = 0.5;
 const MAX_PIXELS: u32 = 4096;
-const MAX_CACHED_RENDERS: usize = 64;
+/// Roomy enough for every formula on screen, since inline math adds many
+/// small renders and a full cache is dropped as a whole.
+const MAX_CACHED_RENDERS: usize = 512;
 
 /// One terminal row of text, with the number of physical rows it spans
 /// when the terminal soft-wrapped it.
@@ -56,8 +63,23 @@ pub struct TextLine {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RenderKind {
+    Mermaid,
+    DisplayMath,
+    InlineMath,
+}
+
+fn source_hash(kind: RenderKind, source: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    kind.hash(&mut hasher);
+    source.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiagramBlock {
+    pub kind: RenderKind,
     /// Rows covered, tags included.
     pub rows: Range<StableRowIndex>,
     /// Column of the opening tag; the diagram is drawn from here.
@@ -67,16 +89,34 @@ pub struct DiagramBlock {
 }
 
 impl DiagramBlock {
-    fn new(rows: Range<StableRowIndex>, col: usize, source: String) -> Self {
-        let mut hasher = DefaultHasher::new();
-        source.hash(&mut hasher);
+    fn new(kind: RenderKind, rows: Range<StableRowIndex>, col: usize, source: String) -> Self {
         Self {
+            kind,
             rows,
             col,
+            source_hash: source_hash(kind, &source),
             source: source.into(),
-            source_hash: hasher.finish(),
         }
     }
+}
+
+/// `$…$` math found on one row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InlineMath {
+    pub row: StableRowIndex,
+    pub cols: Range<usize>,
+    pub source: Arc<str>,
+    pub source_hash: u64,
+}
+
+/// Splits off the indentation or message bullet that agent TUIs put before
+/// a line, returning its width in columns and the rest of the line.
+pub fn split_indent(text: &str) -> (usize, &str) {
+    let body = text.trim_start_matches(|c: char| c.is_whitespace() || BULLETS.contains(&c));
+    (
+        unicode_column_width(&text[..text.len() - body.len()], None),
+        body,
+    )
 }
 
 /// Returns the column of the opening tag when `text` is a line holding only
@@ -109,7 +149,8 @@ fn block_rows(lines: &[TextLine], first: usize, last: usize) -> Range<StableRowI
     lines[first].row..lines[last].row + lines[last].rows as StableRowIndex
 }
 
-pub fn find_blocks(lines: &[TextLine]) -> Vec<DiagramBlock> {
+/// Finds Mermaid blocks, and `$$` math blocks when `math` is set.
+pub fn find_blocks(lines: &[TextLine], math: bool) -> Vec<DiagramBlock> {
     let mut blocks = vec![];
     let mut i = 0;
     while i < lines.len() {
@@ -123,13 +164,28 @@ pub fn find_blocks(lines: &[TextLine]) -> Vec<DiagramBlock> {
                     .map(|l| l.text.trim_end())
                     .collect::<Vec<_>>()
                     .join("\n");
-                blocks.push(DiagramBlock::new(block_rows(lines, i, end), col, source));
+                blocks.push(DiagramBlock::new(
+                    RenderKind::Mermaid,
+                    block_rows(lines, i, end),
+                    col,
+                    source,
+                ));
                 i = end + 1;
                 continue;
             }
+        } else if let Some((end, col, source)) =
+            math.then(|| math::display_math_at(lines, i)).flatten()
+        {
+            blocks.push(DiagramBlock::new(
+                RenderKind::DisplayMath,
+                block_rows(lines, i, end),
+                col,
+                source,
+            ));
+            i = end + 1;
+            continue;
         } else if text.contains(CODEX_FALLBACK) {
-            let body = text.trim_start_matches(|c: char| c.is_whitespace() || BULLETS.contains(&c));
-            let col = unicode_column_width(&text[..text.len() - body.len()], None);
+            let (col, _) = split_indent(text);
             let end = window
                 .take_while(|&j| !lines[j].text.trim().is_empty())
                 .last();
@@ -139,7 +195,12 @@ pub fn find_blocks(lines: &[TextLine]) -> Vec<DiagramBlock> {
                     .map(|l| l.text.trim_end())
                     .collect::<Vec<_>>()
                     .join("\n");
-                blocks.push(DiagramBlock::new(block_rows(lines, i, end), col, source));
+                blocks.push(DiagramBlock::new(
+                    RenderKind::Mermaid,
+                    block_rows(lines, i, end),
+                    col,
+                    source,
+                ));
                 i = end + 1;
                 continue;
             }
@@ -151,7 +212,7 @@ pub fn find_blocks(lines: &[TextLine]) -> Vec<DiagramBlock> {
 
 /// What the diagram is drawn with: the terminal's colors and font.
 pub struct DiagramStyle {
-    foreground: (u8, u8, u8),
+    pub foreground: (u8, u8, u8),
     background: (u8, u8, u8),
     ansi: [(u8, u8, u8); 16],
     font_family: String,
@@ -160,7 +221,7 @@ pub struct DiagramStyle {
     font: Option<FontDataHandle>,
     /// Font size in device pixels, so that at scale 1.0 diagram text
     /// matches the terminal text.
-    font_px: u32,
+    pub font_px: u32,
 }
 
 fn rgb(c: SrgbaTuple) -> (u8, u8, u8) {
@@ -274,6 +335,56 @@ pub struct Rendered {
     pub image: Arc<ImageData>,
     pub width: u32,
     pub height: u32,
+    /// Distance from the top to the math baseline, in pixels; zero for
+    /// diagrams, which have none.
+    pub baseline: f32,
+}
+
+impl Rendered {
+    #[cfg(test)]
+    pub fn blank() -> Self {
+        Self {
+            image: Arc::new(ImageData::with_data(ImageDataType::new_single_frame(
+                1,
+                1,
+                vec![0; 4],
+            ))),
+            width: 1,
+            height: 1,
+            baseline: 0.,
+        }
+    }
+}
+
+/// Rasterizes `tree` at `scale` into straight-alpha RGBA.
+pub fn rasterize(tree: &usvg::Tree, scale: f32) -> anyhow::Result<Rendered> {
+    let size = tree.size();
+    let width = ((size.width() * scale).ceil() as u32).clamp(1, MAX_PIXELS);
+    let height = ((size.height() * scale).ceil() as u32).clamp(1, MAX_PIXELS);
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| anyhow::anyhow!("invalid pixmap size {width}x{height}"))?;
+    resvg::render(
+        tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    let data = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    Ok(Rendered {
+        image: Arc::new(ImageData::with_data(ImageDataType::new_single_frame(
+            width, height, data,
+        ))),
+        width,
+        height,
+        baseline: 0.,
+    })
 }
 
 static SYSTEM_FONTS: LazyLock<usvg::fontdb::Database> = LazyLock::new(|| {
@@ -347,32 +458,21 @@ pub fn render_mermaid(
         size.width(),
         size.height()
     );
+    rasterize(&tree, scale)
+}
 
-    let width = ((size.width() * scale).ceil() as u32).clamp(1, MAX_PIXELS);
-    let height = ((size.height() * scale).ceil() as u32).clamp(1, MAX_PIXELS);
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| anyhow::anyhow!("invalid pixmap size {width}x{height}"))?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-
-    let data = pixmap
-        .pixels()
-        .iter()
-        .flat_map(|p| {
-            let c = p.demultiply();
-            [c.red(), c.green(), c.blue(), c.alpha()]
-        })
-        .collect();
-    Ok(Rendered {
-        image: Arc::new(ImageData::with_data(ImageDataType::new_single_frame(
-            width, height, data,
-        ))),
-        width,
-        height,
-    })
+fn render(
+    kind: RenderKind,
+    source: &str,
+    style: &DiagramStyle,
+    box_w: u32,
+    box_h: u32,
+) -> anyhow::Result<Rendered> {
+    match kind {
+        RenderKind::Mermaid => render_mermaid(source, style, box_w, box_h),
+        RenderKind::DisplayMath => math::render_math(source, true, style, box_w, box_h),
+        RenderKind::InlineMath => math::render_math(source, false, style, box_w, box_h),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -386,7 +486,9 @@ struct RenderKey {
 struct PaneScan {
     seqno: SequenceNo,
     range: Range<StableRowIndex>,
+    math: bool,
     blocks: Arc<Vec<DiagramBlock>>,
+    inline: Arc<Vec<InlineMath>>,
 }
 
 #[derive(Default)]
@@ -397,6 +499,7 @@ pub struct DiagramState {
     /// size is in flight so resizing doesn't flash the source text.
     latest: HashMap<u64, Rendered>,
     in_flight: HashSet<u64>,
+    pub collapsed: math::CollapsedLines,
 }
 
 impl DiagramState {
@@ -430,36 +533,89 @@ pub struct PlacedDiagram {
     pub rendered: Rendered,
 }
 
+/// What is drawn over a pane instead of its text: diagram and display math
+/// blocks over whole rows, inline math within rows (sorted by row, then
+/// column).
+#[derive(Default)]
+pub struct PaneOverlays {
+    pub blocks: Vec<PlacedDiagram>,
+    pub inline: Vec<PlacedInline>,
+}
+
+impl PaneOverlays {
+    /// The inline math of `row`, in column order.
+    pub fn inline_on(&self, row: StableRowIndex) -> Vec<&PlacedInline> {
+        self.inline.iter().filter(|m| m.row == row).collect()
+    }
+}
+
+/// The current render for `key`, or the latest one at another size while
+/// a render at this size is requested.
+enum Lookup {
+    Ready(Rendered),
+    Failed,
+    Missing,
+}
+
 impl crate::TermWindow {
     fn scan_pane_for_diagrams(
         &mut self,
         pos: &PositionedPane,
         viewport: &Range<StableRowIndex>,
-    ) -> Arc<Vec<DiagramBlock>> {
+    ) -> (Arc<Vec<DiagramBlock>>, Arc<Vec<InlineMath>>) {
         let pane_id = pos.pane.pane_id();
         let seqno = pos.pane.get_current_seqno();
+        // Math is left alone in full-screen apps such as editors, where the
+        // source is being worked on, unless an agent runs there (Codex draws
+        // on the alternate screen).
+        let math = !pos.pane.is_alt_screen_active()
+            || mux::Mux::try_get().is_some_and(|mux| mux.agent_status_for_pane(pane_id).is_some());
         // Look past the viewport so blocks that are partly scrolled out are
         // still found whole.
         let margin = MAX_BLOCK_ROWS as StableRowIndex;
         let range = viewport.start - margin..viewport.end + margin;
         if let Some(scan) = self.diagrams.scans.get(&pane_id) {
-            if scan.seqno == seqno && scan.range == range {
-                return Arc::clone(&scan.blocks);
+            if scan.seqno == seqno && scan.range == range && scan.math == math {
+                return (Arc::clone(&scan.blocks), Arc::clone(&scan.inline));
             }
         }
 
         let (first_row, lines) = pos.pane.get_lines(range.clone());
         let mut text_lines: Vec<TextLine> = vec![];
+        let mut inline = vec![];
         let mut continues = false;
         for (idx, line) in lines.iter().enumerate() {
+            let row = first_row + idx as StableRowIndex;
             let text = line.as_str();
+            if math && text.contains('$') {
+                let chars: Vec<(usize, char)> = line
+                    .visible_cells()
+                    .flat_map(|cell| {
+                        let col = cell.cell_index();
+                        cell.str()
+                            .chars()
+                            .map(move |c| (col, c))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                inline.extend(
+                    math::find_inline_math(&chars)
+                        .into_iter()
+                        .map(|span| InlineMath {
+                            row,
+                            cols: span.cols,
+                            source_hash: source_hash(RenderKind::InlineMath, &span.source),
+                            source: span.source.into(),
+                        }),
+                );
+            }
             match text_lines.last_mut() {
                 Some(prev) if continues => {
                     prev.text.push_str(text.trim_end());
                     prev.rows += 1;
                 }
                 _ => text_lines.push(TextLine {
-                    row: first_row + idx as StableRowIndex,
+                    row,
                     rows: 1,
                     text: text.into_owned(),
                 }),
@@ -467,33 +623,25 @@ impl crate::TermWindow {
             continues = line.last_cell_was_wrapped();
         }
 
-        let blocks = Arc::new(find_blocks(&text_lines));
+        let blocks = find_blocks(&text_lines, math);
+        // A `$` inside a block's source is the block's business.
+        inline.retain(|m: &InlineMath| !blocks.iter().any(|b| b.rows.contains(&m.row)));
+        let blocks = Arc::new(blocks);
+        let inline = Arc::new(inline);
         self.diagrams.scans.insert(
             pane_id,
             PaneScan {
                 seqno,
                 range,
+                math,
                 blocks: Arc::clone(&blocks),
+                inline: Arc::clone(&inline),
             },
         );
-        blocks
+        (blocks, inline)
     }
 
-    /// Finds the diagram blocks visible in `viewport`, starts renders for
-    /// those not ready at the current size, and returns the drawable ones.
-    pub fn diagrams_for_pane(
-        &mut self,
-        pos: &PositionedPane,
-        viewport: &Range<StableRowIndex>,
-        palette: &ColorPalette,
-    ) -> Vec<PlacedDiagram> {
-        let blocks = self.scan_pane_for_diagrams(pos, viewport);
-        if blocks.is_empty() {
-            return vec![];
-        }
-
-        let cell_w = self.render_metrics.cell_size.width as f32;
-        let cell_h = self.render_metrics.cell_size.height as f32;
+    fn diagram_style(&self, palette: &ColorPalette) -> Arc<DiagramStyle> {
         let (font_family, font, font_px) = match self
             .fonts
             .default_font()
@@ -507,11 +655,54 @@ impl crate::TermWindow {
                 self.config.font_size as f32 * self.dimensions.dpi as f32 / 72.0,
             ),
         };
-        let style = Arc::new(DiagramStyle::new(palette, &font_family, font, font_px));
+        Arc::new(DiagramStyle::new(palette, &font_family, font, font_px))
+    }
+
+    fn lookup_render(
+        &mut self,
+        kind: RenderKind,
+        key: RenderKey,
+        source: &Arc<str>,
+        style: &Arc<DiagramStyle>,
+    ) -> Option<Rendered> {
+        let lookup = match self.diagrams.renders.get(&key) {
+            Some(Some(rendered)) => Lookup::Ready(rendered.clone()),
+            Some(None) => Lookup::Failed,
+            None => Lookup::Missing,
+        };
+        match lookup {
+            Lookup::Ready(rendered) => Some(rendered),
+            Lookup::Failed => None,
+            Lookup::Missing => {
+                self.request_diagram_render(kind, key, Arc::clone(source), style);
+                self.diagrams.latest.get(&key.source_hash).cloned()
+            }
+        }
+    }
+
+    /// Finds the diagram and math blocks and the inline math visible in
+    /// `viewport`, starts renders for those not ready at the current size,
+    /// and returns the drawable ones. Inline math on `cursor_row` stays
+    /// text, since that row may be a prompt being typed into.
+    pub fn diagrams_for_pane(
+        &mut self,
+        pos: &PositionedPane,
+        viewport: &Range<StableRowIndex>,
+        palette: &ColorPalette,
+        cursor_row: StableRowIndex,
+    ) -> PaneOverlays {
+        let (blocks, inline) = self.scan_pane_for_diagrams(pos, viewport);
+        if blocks.is_empty() && inline.is_empty() {
+            return PaneOverlays::default();
+        }
+
+        let cell_w = self.render_metrics.cell_size.width as f32;
+        let cell_h = self.render_metrics.cell_size.height as f32;
+        let style = self.diagram_style(palette);
         let style_hash = style.hash_value();
         let cols = pos.pane.get_dimensions().cols;
 
-        let mut placed = vec![];
+        let mut overlays = PaneOverlays::default();
         for block in blocks.iter() {
             if block.rows.end <= viewport.start || block.rows.start >= viewport.end {
                 continue;
@@ -524,16 +715,8 @@ impl crate::TermWindow {
                 box_w: box_w as u32,
                 box_h: box_h as u32,
             };
-            let rendered = match self.diagrams.renders.get(&key) {
-                Some(Some(rendered)) => Some(rendered.clone()),
-                Some(None) => None,
-                None => {
-                    self.request_diagram_render(key, Arc::clone(&block.source), &style);
-                    self.diagrams.latest.get(&block.source_hash).cloned()
-                }
-            };
-            if let Some(rendered) = rendered {
-                placed.push(PlacedDiagram {
+            if let Some(rendered) = self.lookup_render(block.kind, key, &block.source, &style) {
+                overlays.blocks.push(PlacedDiagram {
                     rows: block.rows.clone(),
                     col: block.col,
                     box_w,
@@ -542,11 +725,52 @@ impl crate::TermWindow {
                 });
             }
         }
-        placed
+
+        for span in inline.iter() {
+            if !viewport.contains(&span.row) || span.row == cursor_row {
+                continue;
+            }
+            let box_w = span.cols.len() as f32 * cell_w;
+            let key = RenderKey {
+                source_hash: span.source_hash,
+                style_hash,
+                box_w: box_w as u32,
+                box_h: cell_h as u32,
+            };
+            let Some(rendered) =
+                self.lookup_render(RenderKind::InlineMath, key, &span.source, &style)
+            else {
+                continue;
+            };
+            // A stale render from another size is shrunk to fit, never grown.
+            let fit = (box_w / rendered.width as f32)
+                .min(cell_h / rendered.height as f32)
+                .min(1.0);
+            let width = rendered.width as f32 * fit;
+            overlays.inline.push(PlacedInline {
+                row: span.row,
+                cols: span.cols.clone(),
+                cells: ((width / cell_w).ceil() as usize).clamp(1, span.cols.len()),
+                draw_col: 0,
+                width,
+                height: rendered.height as f32 * fit,
+                baseline: rendered.baseline * fit,
+                rendered,
+            });
+        }
+        // Each formula is drawn where its row puts it once collapsed.
+        for i in 0..overlays.inline.len() {
+            let row = overlays.inline[i].row;
+            let start = overlays.inline[i].cols.start;
+            let draw_col = math::collapsed_col(&overlays.inline_on(row), start);
+            overlays.inline[i].draw_col = draw_col;
+        }
+        overlays
     }
 
     fn request_diagram_render(
         &mut self,
+        kind: RenderKind,
         key: RenderKey,
         source: Arc<str>,
         style: &Arc<DiagramStyle>,
@@ -563,7 +787,7 @@ impl crate::TermWindow {
         let style = Arc::clone(style);
         spawn(async move {
             let result = spawn_into_new_thread(move || {
-                Ok(render_mermaid(&source, &style, key.box_w, key.box_h))
+                Ok(render(kind, &source, &style, key.box_w, key.box_h))
             })
             .await
             .and_then(|r| r);
@@ -602,12 +826,54 @@ impl crate::TermWindow {
         let x0 = left_pixel_x + diagram.col as f32 * cell_w;
         let box_top = pane_top_px + (diagram.rows.start - viewport_top) as f32 * cell_h;
         let y0 = box_top + ((diagram.box_h - height) / 2.0).floor();
-        let y1 = y0 + height;
+        let clip = pane_top_px..pane_top_px + viewport_rows as f32 * cell_h;
+        self.paint_rendered(layers, rendered, (x0, y0), (width, height), clip)
+    }
 
-        let clip_top = pane_top_px;
-        let clip_bottom = pane_top_px + viewport_rows as f32 * cell_h;
-        let top = y0.max(clip_top);
-        let bottom = y1.min(clip_bottom);
+    /// Draws inline math on its row's baseline, centered in the cells the
+    /// collapsed row leaves for it.
+    pub fn paint_inline_math(
+        &self,
+        layers: &mut TripleLayerQuadAllocator,
+        math: &PlacedInline,
+        viewport_top: StableRowIndex,
+        pane_top_px: f32,
+        left_pixel_x: f32,
+    ) -> anyhow::Result<()> {
+        let cell_w = self.render_metrics.cell_size.width as f32;
+        let cell_h = self.render_metrics.cell_size.height as f32;
+        let row_top = pane_top_px + (math.row - viewport_top) as f32 * cell_h;
+        let baseline = row_top + cell_h + self.render_metrics.descender.get() as f32;
+
+        let x0 = left_pixel_x
+            + math.draw_col as f32 * cell_w
+            + ((math.cells as f32 * cell_w - math.width) / 2.0).floor();
+        let y0 = (baseline - math.baseline)
+            .round()
+            .min(row_top + cell_h - math.height)
+            .max(row_top);
+        self.paint_rendered(
+            layers,
+            &math.rendered,
+            (x0, y0),
+            (math.width, math.height),
+            row_top..row_top + cell_h,
+        )
+    }
+
+    /// Draws `rendered` as one textured quad at `origin` sized `size`,
+    /// clipped vertically to `clip`.
+    fn paint_rendered(
+        &self,
+        layers: &mut TripleLayerQuadAllocator,
+        rendered: &Rendered,
+        (x0, y0): (f32, f32),
+        (width, height): (f32, f32),
+        clip: Range<f32>,
+    ) -> anyhow::Result<()> {
+        let y1 = y0 + height;
+        let top = y0.max(clip.start);
+        let bottom = y1.min(clip.end);
         if bottom <= top {
             return Ok(());
         }
@@ -665,9 +931,13 @@ mod test {
             .collect()
     }
 
+    fn find_blocks_text(lines: &[TextLine]) -> Vec<DiagramBlock> {
+        find_blocks(lines, true)
+    }
+
     #[test]
     fn finds_claude_block() {
-        let blocks = find_blocks(&lines(
+        let blocks = find_blocks_text(&lines(
             "⏺ Here:\n  <wezmux_diagram lang=\"mermaid\">\n  graph LR\n    A --> B\n  </wezmux_diagram>\n  Done.",
         ));
         assert_eq!(blocks.len(), 1);
@@ -678,7 +948,7 @@ mod test {
 
     #[test]
     fn tag_after_bullet() {
-        let blocks = find_blocks(&lines(
+        let blocks = find_blocks_text(&lines(
             "⏺ <wezmux_diagram>\n  graph LR\n  A --> B\n  </wezmux_diagram>",
         ));
         assert_eq!(blocks.len(), 1);
@@ -688,25 +958,27 @@ mod test {
 
     #[test]
     fn ignores_prose_mentions_and_other_languages() {
-        assert!(find_blocks(&lines(
+        assert!(find_blocks_text(&lines(
             "use <wezmux_diagram> to draw\ngraph LR\n</wezmux_diagram>"
         ))
         .is_empty());
-        assert!(find_blocks(&lines(
+        assert!(find_blocks_text(&lines(
             "<wezmux_diagram lang=\"dot\">\ndigraph { a -> b }\n</wezmux_diagram>"
         ))
         .is_empty());
-        assert!(find_blocks(&lines("<wezmux_diagramx>\ngraph LR\n</wezmux_diagram>")).is_empty());
+        assert!(
+            find_blocks_text(&lines("<wezmux_diagramx>\ngraph LR\n</wezmux_diagram>")).is_empty()
+        );
     }
 
     #[test]
     fn unclosed_block_is_left_alone() {
-        assert!(find_blocks(&lines("<wezmux_diagram>\ngraph LR\n  A --> B")).is_empty());
+        assert!(find_blocks_text(&lines("<wezmux_diagram>\ngraph LR\n  A --> B")).is_empty());
     }
 
     #[test]
     fn finds_codex_fallback() {
-        let blocks = find_blocks(&lines(
+        let blocks = find_blocks_text(&lines(
             "  I would build this structure:\n\n  This Mermaid diagram exceeds the terminal renderer's size limits.\n  flowchart TD\n      A --> B\n\n  1. Next",
         ));
         assert_eq!(blocks.len(), 1);
@@ -720,7 +992,18 @@ mod test {
         let mut l = lines("<wezmux_diagram>\ngraph LR\n</wezmux_diagram>");
         l[1].rows = 2;
         l[2].row += 1;
-        assert_eq!(find_blocks(&l)[0].rows, 100..104);
+        assert_eq!(find_blocks(&l, true)[0].rows, 100..104);
+    }
+
+    #[test]
+    fn finds_display_math_between_diagrams() {
+        let text = "<wezmux_diagram>\ngraph LR\n</wezmux_diagram>\n  $$\n  x^2\n  $$";
+        let blocks = find_blocks_text(&lines(text));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].kind, RenderKind::DisplayMath);
+        assert_eq!(blocks[1].rows, 103..106);
+        assert_eq!(&*blocks[1].source, "x^2");
+        assert_eq!(find_blocks(&lines(text), false).len(), 1);
     }
 
     #[test]

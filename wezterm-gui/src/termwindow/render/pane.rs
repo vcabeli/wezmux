@@ -1,6 +1,8 @@
 use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
+use crate::termwindow::diagram::PaneOverlays;
+use crate::termwindow::math::{self, PlacedInline};
 use crate::termwindow::render::{
     same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
     RenderScreenLineParams,
@@ -311,9 +313,11 @@ impl crate::TermWindow {
             pos.pane
                 .apply_hyperlinks(stable_range.clone(), &self.config.hyperlink_rules);
 
-            // Rows under a rendered diagram show the diagram instead of its source.
-            let diagrams = self.diagrams_for_pane(pos, &stable_range, &palette);
-            let hidden_rows: Vec<_> = diagrams.iter().map(|d| d.rows.clone()).collect();
+            // Rows under a rendered diagram or math block show it instead of
+            // its source, and rows with inline math are painted collapsed
+            // around it.
+            let overlays = self.diagrams_for_pane(pos, &stable_range, &palette, cursor.y);
+            let hidden_rows: Vec<_> = overlays.blocks.iter().map(|d| d.rows.clone()).collect();
 
             struct LineRender<'a, 'b> {
                 term_window: &'a mut crate::TermWindow,
@@ -339,6 +343,7 @@ impl crate::TermWindow {
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
                 hidden_rows: &'a [std::ops::Range<StableRowIndex>],
+                overlays: &'a PaneOverlays,
                 error: Option<anyhow::Error>,
             }
 
@@ -370,6 +375,7 @@ impl crate::TermWindow {
                 window_is_transparent,
                 layers,
                 hidden_rows: &hidden_rows,
+                overlays: &overlays,
                 error: None,
             };
 
@@ -379,6 +385,7 @@ impl crate::TermWindow {
                     stable_top: StableRowIndex,
                     line_idx: usize,
                     line: &&mut Line,
+                    inline_math: &[&PlacedInline],
                 ) -> anyhow::Result<()> {
                     let stable_row = stable_top + line_idx as StableRowIndex;
                     let selrange = self
@@ -386,6 +393,14 @@ impl crate::TermWindow {
                         .map_or(0..0, |sel| sel.cols_for_row(stable_row, self.rectangular));
                     // Constrain to the pane width!
                     let selrange = selrange.start..selrange.end.min(self.dims.cols);
+                    // A row with inline math is painted collapsed, so its
+                    // selection is too.
+                    let selrange = if inline_math.is_empty() {
+                        selrange
+                    } else {
+                        math::collapsed_col(inline_math, selrange.start)
+                            ..math::collapsed_col(inline_math, selrange.end)
+                    };
 
                     let (cursor, composing, password_input) = if self.cursor.y == stable_row {
                         (
@@ -567,7 +582,28 @@ impl crate::TermWindow {
                         if self.hidden_rows.iter().any(|rows| rows.contains(&row)) {
                             continue;
                         }
-                        if let Err(err) = self.render_line(stable_top, line_idx, line) {
+                        let inline_math = self.overlays.inline_on(row);
+                        let result = if inline_math.is_empty() {
+                            self.render_line(stable_top, line_idx, line, &[])
+                        } else {
+                            let pane_id = self.pane_id;
+                            let collapsed = &mut self.term_window.diagrams.collapsed;
+                            let mut collapsed = collapsed.take(pane_id, row, line, &inline_math);
+                            let result = self.render_line(
+                                stable_top,
+                                line_idx,
+                                &&mut collapsed,
+                                &inline_math,
+                            );
+                            self.term_window.diagrams.collapsed.put(
+                                pane_id,
+                                row,
+                                collapsed,
+                                &inline_math,
+                            );
+                            result
+                        };
+                        if let Err(err) = result {
                             self.error.replace(err);
                             return;
                         }
@@ -581,7 +617,11 @@ impl crate::TermWindow {
             }
 
             let pane_top_px = top_pixel_y + pos.top as f32 * cell_height;
-            for diagram in &diagrams {
+            for math in &overlays.inline {
+                self.paint_inline_math(layers, math, stable_range.start, pane_top_px, left_pixel_x)
+                    .context("paint_inline_math")?;
+            }
+            for diagram in &overlays.blocks {
                 self.paint_diagram(
                     layers,
                     diagram,

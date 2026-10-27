@@ -110,18 +110,18 @@ ENDJSON
 # Replace placeholder with actual hook dir path
 SETTINGS_JSON="${SETTINGS_JSON//HOOK_DIR_PLACEHOLDER/$HOOK_DIR}"
 
-# Advertise inline diagrams (WEZMUX_DIAGRAM_PROMPT)
-. "$HOOK_DIR/lib/diagram-prompt.sh"
+# Advertise inline diagrams and math (WEZMUX_INLINE_PROMPT)
+. "$HOOK_DIR/lib/inline-prompt.sh"
 
 # Check what the user already passed
 has_settings=false
-wants_diagrams="${WEZMUX_DIAGRAMS:-1}"
+wants_prompt=1
 for arg in "$@"; do
     case "$arg" in
         --settings) has_settings=true ;;
         # Printed output may be piped elsewhere, and a second system prompt
         # flag would conflict with the user's.
-        -p|--print|--system-prompt|--append-system-prompt) wants_diagrams=0 ;;
+        -p|--print|--system-prompt|--append-system-prompt) wants_prompt=0 ;;
     esac
 done
 
@@ -129,8 +129,8 @@ extra_args=()
 if [ "$has_settings" = false ]; then
     extra_args+=(--settings "$SETTINGS_JSON")
 fi
-if [ "$wants_diagrams" = 1 ]; then
-    extra_args+=(--append-system-prompt "$WEZMUX_DIAGRAM_PROMPT")
+if [ "$wants_prompt" = 1 ] && [ -n "$WEZMUX_INLINE_PROMPT" ]; then
+    extra_args+=(--append-system-prompt "$WEZMUX_INLINE_PROMPT")
 fi
 
 exec "$REAL_CLAUDE" ${extra_args[@]+"${extra_args[@]}"} "$@"

@@ -74,6 +74,7 @@ pub mod charselect;
 pub mod clipboard;
 pub mod diagram;
 pub mod keyevent;
+pub mod math;
 pub mod modal;
 mod mouseevent;
 pub mod palette;
