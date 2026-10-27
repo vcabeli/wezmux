@@ -237,6 +237,24 @@ pub fn collapsed_col(spans: &[&PlacedInline], col: usize) -> usize {
     col - shift
 }
 
+/// The inverse of [`collapsed_col`]: the grid column under column `col` of
+/// a collapsed row, so that clicks and drags land on the cell drawn there.
+/// Within a formula it is the matching cell of its source.
+pub fn grid_col(spans: &[&PlacedInline], col: usize) -> usize {
+    let mut shift = 0;
+    for span in spans {
+        let start = span.cols.start - shift;
+        if col < start {
+            break;
+        }
+        if col < start + span.cells {
+            return span.cols.start + (col - start) * span.cols.len() / span.cells;
+        }
+        shift += span.cols.len() - span.cells;
+    }
+    col + shift
+}
+
 /// A copy of `line` in which each span's cells become `cells` blank cells,
 /// so the text after a formula closes up to it.
 pub fn collapse_line(line: &Line, spans: &[&PlacedInline]) -> Line {
@@ -408,6 +426,22 @@ mod test {
         assert_eq!(collapsed_col(&spans, 12), 7);
         assert_eq!(collapsed_col(&spans, 15), 8);
         assert_eq!(collapsed_col(&spans, 20), 13);
+    }
+
+    #[test]
+    fn maps_mouse_columns_back_to_the_grid() {
+        let a = placed(2..10, 3);
+        let b = placed(12..15, 1);
+        let spans = [&a, &b];
+        assert_eq!(grid_col(&spans, 0), 0);
+        assert_eq!(grid_col(&spans, 2), 2);
+        assert_eq!(grid_col(&spans, 3), 4);
+        assert_eq!(grid_col(&spans, 5), 10);
+        assert_eq!(grid_col(&spans, 7), 12);
+        assert_eq!(grid_col(&spans, 8), 15);
+        for col in [0, 1, 10, 11, 15, 20] {
+            assert_eq!(grid_col(&spans, collapsed_col(&spans, col)), col);
+        }
     }
 
     #[test]

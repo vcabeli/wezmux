@@ -20,6 +20,7 @@
 //! as a span of cells within a row.
 
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
+use crate::selection::SelectionRange;
 use crate::termwindow::math::{self, PlacedInline};
 use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::TermWindowNotif;
@@ -500,9 +501,25 @@ pub struct DiagramState {
     latest: HashMap<u64, Rendered>,
     in_flight: HashSet<u64>,
     pub collapsed: math::CollapsedLines,
+    /// The inline math last painted in each pane, for mapping the mouse.
+    painted_inline: HashMap<PaneId, Vec<PlacedInline>>,
 }
 
 impl DiagramState {
+    pub fn set_painted_inline(&mut self, pane_id: PaneId, inline: Vec<PlacedInline>) {
+        self.painted_inline.insert(pane_id, inline);
+    }
+
+    /// The grid column under column `col` of `row` as painted, which differs
+    /// from `col` right of inline math (see [`math::grid_col`]).
+    pub fn grid_col(&self, pane_id: PaneId, row: StableRowIndex, col: usize) -> usize {
+        let Some(inline) = self.painted_inline.get(&pane_id) else {
+            return col;
+        };
+        let spans: Vec<_> = inline.iter().filter(|m| m.row == row).collect();
+        math::grid_col(&spans, col)
+    }
+
     fn finish(&mut self, key: RenderKey, result: anyhow::Result<Rendered>) {
         self.in_flight.remove(&key.source_hash);
         if self.renders.len() >= MAX_CACHED_RENDERS {
@@ -683,14 +700,23 @@ impl crate::TermWindow {
     /// Finds the diagram and math blocks and the inline math visible in
     /// `viewport`, starts renders for those not ready at the current size,
     /// and returns the drawable ones. Inline math on `cursor_row` stays
-    /// text, since that row may be a prompt being typed into.
+    /// text, since that row may be a prompt being typed into, and so does
+    /// anything the selection touches, so that what is selected is what is
+    /// copied.
     pub fn diagrams_for_pane(
         &mut self,
         pos: &PositionedPane,
         viewport: &Range<StableRowIndex>,
         palette: &ColorPalette,
         cursor_row: StableRowIndex,
+        selection: Option<(&SelectionRange, bool)>,
     ) -> PaneOverlays {
+        let selected = |row: StableRowIndex, cols: &Range<usize>| {
+            selection.is_some_and(|(sel, rectangular)| {
+                let sel = sel.cols_for_row(row, rectangular);
+                sel.start < cols.end && cols.start < sel.end
+            })
+        };
         let (blocks, inline) = self.scan_pane_for_diagrams(pos, viewport);
         if blocks.is_empty() && inline.is_empty() {
             return PaneOverlays::default();
@@ -704,7 +730,13 @@ impl crate::TermWindow {
 
         let mut overlays = PaneOverlays::default();
         for block in blocks.iter() {
-            if block.rows.end <= viewport.start || block.rows.start >= viewport.end {
+            if block.rows.end <= viewport.start
+                || block.rows.start >= viewport.end
+                || block
+                    .rows
+                    .clone()
+                    .any(|row| selected(row, &(0..usize::MAX)))
+            {
                 continue;
             }
             let box_w = cols.saturating_sub(block.col) as f32 * cell_w;
@@ -727,7 +759,10 @@ impl crate::TermWindow {
         }
 
         for span in inline.iter() {
-            if !viewport.contains(&span.row) || span.row == cursor_row {
+            if !viewport.contains(&span.row)
+                || span.row == cursor_row
+                || selected(span.row, &span.cols)
+            {
                 continue;
             }
             let box_w = span.cols.len() as f32 * cell_w;

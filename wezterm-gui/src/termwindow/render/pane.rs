@@ -316,7 +316,13 @@ impl crate::TermWindow {
             // Rows under a rendered diagram or math block show it instead of
             // its source, and rows with inline math are painted collapsed
             // around it.
-            let overlays = self.diagrams_for_pane(pos, &stable_range, &palette, cursor.y);
+            let overlays = self.diagrams_for_pane(
+                pos,
+                &stable_range,
+                &palette,
+                cursor.y,
+                selrange.as_ref().map(|sel| (sel, rectangular)),
+            );
             let hidden_rows: Vec<_> = overlays.blocks.iter().map(|d| d.rows.clone()).collect();
 
             struct LineRender<'a, 'b> {
@@ -632,6 +638,8 @@ impl crate::TermWindow {
                 )
                 .context("paint_diagram")?;
             }
+            self.diagrams
+                .set_painted_inline(pos.pane.pane_id(), overlays.inline);
         }
 
         /*

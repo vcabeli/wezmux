@@ -58,12 +58,13 @@ Detection and rendering live in `wezterm-gui/src/termwindow/math.rs`. The scan c
 - **Size.** KaTeX sets math at 1.21× the surrounding text so the x-heights match. Here the terminal's font size stands in for that text, and the formula is never drawn larger than it. Glyphs are laid out at the final size, so they are rasterized crisp rather than scaled.
 - **Inline layout.** The grid is the TUI's, so the formula can't take cells of its own. Once a formula is rendered, its row is painted from a copy of the line in which the `$…$` cells are replaced by just enough blank cells to hold the formula (`collapse_line`), so the text after it closes up. The blanks keep the surrounding background. The copy is cached per row and line sequence number, so its shape hash survives across frames. The selection on that row is remapped to the collapsed columns. The formula is drawn on the font's baseline (`cell_height + descender`), clamped into the row.
 - **Display layout.** The same as diagrams: rows under the block aren't painted, and the formula is left-aligned with the `$$` and vertically centered in the rows.
-- **Copying.** The source is still in the grid, so selecting over math copies its LaTeX.
+- **Selecting.** A formula or block that the selection touches is drawn as its source until the selection clears, so what is highlighted is what gets copied (its LaTeX). The rest stay drawn.
+- **Mouse.** Each pane's painted inline math is kept, and the mouse handler maps the pointer's column back through the collapse (`math::grid_col`), so clicks, drags, hyperlink hover and mouse reporting land on the grid cell drawn under the pointer.
 
 ## Limits and open questions
 
 - **Rows belong to the TUI.** As with diagrams, display math has only the rows its source took. A 3-row `$$` block holds a display-style sum or fraction. A one-row `$$…$$` falls back to the smaller inline style. Inline math is limited to one row, so a tall inline formula (a matrix in `$…$`) stays text.
-- **Mouse positions after inline math.** Columns to the right of a collapsed formula are drawn left of where the grid has them. Selection is remapped, but hyperlink hover and click positions on that row are not.
+- **Selecting reflows the row.** When a drag reaches a formula, the formula turns back into its source and the rest of its row moves right to grid positions.
 - **False positives.** The delimiter rules and the "looks like math" check keep ordinary shell output as text, but something like `$x=$y` or `$a_b$` in a log will be drawn as math. There is no `config.math` toggle yet.
 - **Markdown damage can't always be undone.** When an agent ignores the prompt and writes bare math, Claude Code has already removed the backslash from `\{`, `\\` and `\,`. Wezmux renders what is left, which can be subtly wrong (`\{x\}` shows as `x`).
 - **Dependency weight.** Wezmux's own code is about 300 lines plus tests. RaTeX is about 40k lines in 9 crates, plus 580 KB of KaTeX fonts, adding 26 crates to the lock file. All are pure Rust and MIT/Apache. Release binary growth is not measured yet.
