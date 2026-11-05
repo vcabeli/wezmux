@@ -490,7 +490,8 @@ fn spacer(font: &Rc<LoadedFont>, width: f32, height: f32, bg: LinearRgba) -> Ele
 }
 
 /// One workspace card, `content_width` pixels wide inside its padding.
-/// The caller places it (display and margins).
+/// The caller places it (display and margins).  `surface` is the color the
+/// card sits on: the sidebar's, or its group's band.
 fn build_card_element(
     font: &Rc<LoadedFont>,
     body_font: &Rc<LoadedFont>,
@@ -499,6 +500,7 @@ fn build_card_element(
     text_cols: usize,
     mono_cols: usize,
     content_width: f32,
+    surface: LinearRgba,
     theme: &SidebarTheme,
     milliseconds: u128,
 ) -> Element {
@@ -506,11 +508,11 @@ fn build_card_element(
     let custom_accent = entry.accent_color.as_deref().map(hex_to_linear);
     let accent = custom_accent.unwrap_or(theme.accent);
     let card_bg = if is_active {
-        tint_linear(theme.bg, accent, 0.12)
+        tint_linear(surface, accent, 0.12)
     } else if let Some(accent) = custom_accent {
-        tint_linear(theme.bg, accent, 0.08)
+        tint_linear(surface, accent, 0.08)
     } else {
-        theme.bg
+        surface
     };
     let title_color = if is_active {
         theme.active_text
@@ -566,16 +568,16 @@ fn build_card_element(
         } else {
             entry.unread_count.to_string()
         };
-        // Outlined, not filled: the sidebar draws with 1px lines.
+        // Filled, unlike the rest of the sidebar's 1px lines: unread
+        // notifications are what the sidebar most needs to make obvious.
         title_parts.push(
-            Element::new(mono_font, ElementContent::Text(count_text))
+            Element::new(font, ElementContent::Text(count_text))
                 .colors(ElementColors {
-                    border: all_borders(theme.accent),
-                    bg: InheritableColor::Inherited,
-                    text: theme.accent.into(),
+                    border: BorderColor::default(),
+                    bg: theme.accent.into(),
+                    text: LinearRgba::with_srgba(255, 255, 255, 255).into(),
                 })
-                .border(BoxDimension::new(px(1.)))
-                .padding(sides(4., 4., 0., 0.))
+                .padding(sides(7., 7., 0., 0.))
                 .vertical_align(VerticalAlign::Middle)
                 .margin(sides(0., 6., 0., 0.)),
         );
@@ -657,7 +659,11 @@ fn build_group_header(
     theme: &SidebarTheme,
 ) -> Element {
     let color = group_color(group, theme);
-    let swatch_fill = if group.collapsed { theme.bg } else { color };
+    let swatch_fill = if group.collapsed {
+        group_band(theme)
+    } else {
+        color
+    };
     let swatch = spacer(font, SWATCH, SWATCH, swatch_fill)
         .border(BoxDimension::new(px(1.)))
         .colors(ElementColors {
@@ -743,6 +749,11 @@ fn build_group_header(
             bg: LinearRgba::with_srgba(255, 255, 255, 10).into(),
             text: InheritableColor::Inherited,
         }))
+}
+
+/// A group's background: halfway between the sidebar's and a hovered card's.
+fn group_band(theme: &SidebarTheme) -> LinearRgba {
+    tint_linear(theme.bg, theme.card_hover, 0.5)
 }
 
 fn group_color(group: &WorkspaceGroup, theme: &SidebarTheme) -> LinearRgba {
@@ -1045,6 +1056,7 @@ impl crate::TermWindow {
                         text_cols,
                         mono_cols,
                         top_content,
+                        theme.bg,
                         theme,
                         milliseconds,
                     )
@@ -1066,7 +1078,8 @@ impl crate::TermWindow {
             let members = &entries[i..i + len];
             i += len;
 
-            root_children.push(build_group_header(
+            let band = group_band(theme);
+            let mut group_children = vec![build_group_header(
                 &font,
                 &body_font,
                 &mono_font,
@@ -1075,7 +1088,7 @@ impl crate::TermWindow {
                 text_cols,
                 content_width,
                 theme,
-            ));
+            )];
 
             // A collapsed group still shows the workspace you're in.
             let rail = tint_linear(theme.bg, group_color(group, theme), 0.45);
@@ -1103,6 +1116,7 @@ impl crate::TermWindow {
                         member_text_cols,
                         member_mono_cols,
                         member_content,
+                        band,
                         theme,
                         milliseconds,
                     )
@@ -1118,7 +1132,7 @@ impl crate::TermWindow {
                 })
                 .collect();
             if !rows.is_empty() {
-                root_children.push(
+                group_children.push(
                     Element::new(&font, ElementContent::Children(rows))
                         .display(DisplayType::Block)
                         .margin(sides(RAIL_X, 0., 0., 6.))
@@ -1135,6 +1149,19 @@ impl crate::TermWindow {
                         }),
                 );
             }
+            // The group's band, full width; groups next to each other keep a
+            // strip of the sidebar between them.
+            root_children.push(
+                Element::new(&font, ElementContent::Children(group_children))
+                    .display(DisplayType::Block)
+                    .min_width(Some(px(content_width.max(1.0))))
+                    .margin(sides(0., 0., CARD_MARGIN_Y, CARD_MARGIN_Y))
+                    .colors(ElementColors {
+                        border: BorderColor::default(),
+                        bg: band.into(),
+                        text: InheritableColor::Inherited,
+                    }),
+            );
         }
 
         let root = Element::new(&font, ElementContent::Children(root_children))
