@@ -52,6 +52,7 @@ impl super::TermWindow {
             | UIItemType::SidebarNotificationBell
             | UIItemType::SidebarSplitHorizontal
             | UIItemType::SidebarSplitVertical
+            | UIItemType::SidebarResumeAgents
             | UIItemType::SidebarSettings
             | UIItemType::SidebarResizeHandle
             | UIItemType::SidebarBackground
@@ -82,6 +83,7 @@ impl super::TermWindow {
             | UIItemType::SidebarNotificationBell
             | UIItemType::SidebarSplitHorizontal
             | UIItemType::SidebarSplitVertical
+            | UIItemType::SidebarResumeAgents
             | UIItemType::SidebarSettings
             | UIItemType::SidebarResizeHandle
             | UIItemType::SidebarBackground
@@ -439,6 +441,7 @@ impl super::TermWindow {
                 | UIItemType::SidebarNotificationBell
                 | UIItemType::SidebarSplitHorizontal
                 | UIItemType::SidebarSplitVertical
+                | UIItemType::SidebarResumeAgents
                 | UIItemType::SidebarSettings
                 | UIItemType::SidebarBackground
         );
@@ -503,6 +506,12 @@ impl super::TermWindow {
                         )
                         .ok();
                     }
+                }
+                context.set_cursor(Some(MouseCursor::Hand));
+            }
+            UIItemType::SidebarResumeAgents => {
+                if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+                    self.resume_agents();
                 }
                 context.set_cursor(Some(MouseCursor::Hand));
             }

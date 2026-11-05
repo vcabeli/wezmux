@@ -1004,6 +1004,7 @@ impl crate::TermWindow {
         let toolbar_items: Vec<Element> = vec![
             toolbar_button(&font, "\u{25EB}", UIItemType::SidebarSplitHorizontal), // ◫ split left|right
             toolbar_button(&font, "\u{229F}", UIItemType::SidebarSplitVertical), // ⊟ split top/bottom
+            toolbar_button(&font, "\u{21BB}", UIItemType::SidebarResumeAgents),  // ↻ resume agents
         ];
 
         root_children.push(

@@ -68,6 +68,7 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::input::LastMouseClick;
 use wezterm_term::{Alert, Progress, StableRowIndex, TerminalConfiguration, TerminalSize};
 
+mod agent_resume;
 pub mod background;
 pub mod box_model;
 pub mod charselect;
@@ -174,6 +175,8 @@ pub enum UIItemType {
     SidebarNotificationBell,
     SidebarSplitHorizontal,
     SidebarSplitVertical,
+    /// Toolbar button: resume agent sessions left from the last quit.
+    SidebarResumeAgents,
     SidebarSettings,
     SidebarResizeHandle,
     SidebarBackground,
@@ -2903,6 +2906,7 @@ impl TermWindow {
             ReloadConfiguration => config::reload(),
             ToggleSidebar => self.toggle_sidebar(),
             JumpToUnreadNotification => self.jump_to_unread_notification(),
+            ResumeAgents => self.resume_agents(),
             MoveTab(n) => self.move_tab(*n)?,
             MoveTabRelative(n) => self.move_tab_relative(*n)?,
             ScrollByPage(n) => self.scroll_by_page(**n, pane)?,

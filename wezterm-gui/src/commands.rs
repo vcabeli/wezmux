@@ -814,6 +814,16 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["View"],
             icon: Some("md_dock_left"),
         },
+        ResumeAgents => CommandDef {
+            brief: "Resume Agent Sessions".into(),
+            doc: "Re-runs the Claude Code and Codex resume commands left in \
+                  panes after a restart, with extra flags you choose"
+                .into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell"],
+            icon: Some("md_restart"),
+        },
         JumpToUnreadNotification => CommandDef {
             brief: "Jump to Unread Notification".into(),
             doc: "Focus the pane with the most recent unread notification".into(),
@@ -2131,6 +2141,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ToggleWorkspaceGroupCollapsed,
         ToggleSidebar,
         JumpToUnreadNotification,
+        ResumeAgents,
         SplitVertical(SpawnCommand {
             domain: SpawnTabDomain::CurrentPaneDomain,
             ..Default::default()

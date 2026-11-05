@@ -40,6 +40,7 @@ cargo test -p mux            # Test a specific crate
 | **PATH injection** | `mux/src/wezmux_zdotdir.rs` | Keeps `bin/` on PATH despite macOS `path_helper` |
 | **Inline diagrams** | `wezterm-gui/src/termwindow/diagram.rs` | Draws Mermaid between `<wezmux_diagram>` tags in place of its source (`docs/inline-diagrams.md`) |
 | **Inline math** | `wezterm-gui/src/termwindow/math.rs` | Draws LaTeX between `$…$` / `$$…$$` in place of its source, via RaTeX; shares diagram.rs's scan, cache and painting (`docs/inline-math.md`) |
+| **Resume agents** | `wezterm-gui/src/termwindow/agent_resume.rs` | `ResumeAgents` action (palette, sidebar ↻): re-runs the Claude/Codex resume command a restored pane ends with, plus flags prompted per agent (last ones kept in `~/.config/wezmux/resume-flags.json`); only types into panes whose foreground process is a shell |
 
 ### Data flow: Agent status
 
