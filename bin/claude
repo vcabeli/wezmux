@@ -46,6 +46,28 @@ SETTINGS_JSON=$(cat <<'ENDJSON'
         ]
       }
     ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-stop-failure.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HOOK_DIR_PLACEHOLDER/on-tool-batch.sh",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
     "Notification": [
       {
         "hooks": [

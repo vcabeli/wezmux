@@ -44,9 +44,11 @@ The wrapper also appends a short system prompt telling Claude it can draw
 | Hook | Event | Emits |
 |------|-------|-------|
 | `on-prompt-submit.sh` | User sends a prompt | `status;working` + notification |
-| `on-notification.sh` | Claude sends a notification | `message;...` + notification. Promotes "needs attention" messages to `status;needs_input` |
+| `on-notification.sh` | Claude sends a notification | `message;...` + notification. Status from `notification_type`: permission, elicitation and agent-input prompts → `status;needs_input`; `idle_prompt` (a minute unused at the prompt) → `status;idle`, with no `message` |
 | `on-needs-input.sh` | Claude asks a question (AskUserQuestion tool) | `status;needs_input` + notification |
+| `on-tool-batch.sh` | A batch of tool calls finishes (PostToolBatch) | `status;working`, which ends "Needs input" once the user has answered a prompt |
 | `on-stop.sh` | Claude finishes a turn | `status;idle` + `message;...` (preview of Claude's response) + notification |
+| `on-stop-failure.sh` | A turn ends on an API error (StopFailure) | `status;idle` + `message;...` + notification |
 | `on-subagent-start.sh` | Claude spawns a subagent | `subagents;N` (incremented count) |
 | `on-subagent-stop.sh` | A subagent completes | `subagents;N` (decremented count) |
 
