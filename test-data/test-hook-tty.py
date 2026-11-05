@@ -148,5 +148,69 @@ class CodexDaemonHookTests(unittest.TestCase):
             self.assertEqual(self.read(master), b"")
 
 
+class ClaudeStatusHookTests(unittest.TestCase):
+    """The status each Claude hook reports, sent to a pty via WEZMUX_HOOK_TTY.
+
+    A pty rather than a file: each write reopens the destination with `>`,
+    which truncates a file and would keep only the last sequence."""
+
+    def run_hook(self, hook, payload):
+        master, slave = pty.openpty()
+        try:
+            subprocess.run([str(BIN / hook)], input=json.dumps(payload), text=True,
+                           env={**os.environ, "WEZMUX_HOOK_TTY": os.ttyname(slave)},
+                           timeout=10)
+            data = b""
+            while select.select([master], [], [], 0.2)[0]:
+                data += os.read(master, 65536)
+        finally:
+            os.close(master)
+            os.close(slave)
+        data = data.decode()
+        statuses = [s.split("\x07")[0] for s in data.split("\x1b]7777;status;")[1:]]
+        return statuses, data
+
+    def notification(self, notification_type, message):
+        payload = {"hook_event_name": "Notification", "message": message}
+        if notification_type is not None:
+            payload["notification_type"] = notification_type
+        return self.run_hook("on-notification.sh", payload)
+
+    def test_idle_prompt_reports_idle_not_needs_input(self):
+        statuses, data = self.notification("idle_prompt", "Claude is waiting for your input")
+        self.assertEqual(statuses, ["idle"])
+        # The generic text must not displace the last turn's preview.
+        self.assertNotIn("\x1b]7777;message;", data)
+
+    def test_prompts_for_input_report_needs_input(self):
+        for kind, message in [
+            ("permission_prompt", "Claude needs your permission to use Bash"),
+            ("elicitation_dialog", "MCP server needs input"),
+            ("agent_needs_input", "Teammate needs your input"),
+        ]:
+            with self.subTest(kind=kind):
+                self.assertEqual(self.notification(kind, message)[0], ["needs_input"])
+
+    def test_informational_notifications_leave_status_alone(self):
+        for kind in ["auth_success", "agent_completed", "push_notification"]:
+            with self.subTest(kind=kind):
+                self.assertEqual(self.notification(kind, "Waiting for nothing")[0], [])
+
+    def test_untyped_notifications_fall_back_to_the_text(self):
+        self.assertEqual(self.notification(None, "Claude is waiting for your input")[0], [])
+        self.assertEqual(
+            self.notification(None, "Claude needs your permission to use Bash")[0],
+            ["needs_input"],
+        )
+
+    def test_tool_batch_reports_working(self):
+        self.assertEqual(self.run_hook("on-tool-batch.sh", {})[0], ["working"])
+
+    def test_stop_failure_reports_idle(self):
+        statuses, data = self.run_hook("on-stop-failure.sh", {"error": "rate_limit"})
+        self.assertEqual(statuses, ["idle"])
+        self.assertIn("rate_limit", data)
+
+
 if __name__ == "__main__":
     unittest.main()
