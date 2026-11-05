@@ -384,7 +384,7 @@ impl GuiFrontEnd {
                 all_workspaces.push(workspace.clone());
             }
             let configs = crate::termwindow::workspace_config::WorkspaceConfigs::load();
-            let ordered = configs.apply_order(&all_workspaces);
+            let ordered = configs.display_order(&all_workspaces);
             let closing_idx = ordered.iter().position(|w| w == &workspace);
 
             // Try next in order, then previous, then any non-empty

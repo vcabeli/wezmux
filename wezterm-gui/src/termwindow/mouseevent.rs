@@ -46,6 +46,8 @@ impl super::TermWindow {
                 }
             }
             UIItemType::SidebarCloseWorkspace(_)
+            | UIItemType::SidebarGroup(_)
+            | UIItemType::SidebarGroupAdd(_)
             | UIItemType::SidebarNewWorkspace
             | UIItemType::SidebarNotificationBell
             | UIItemType::SidebarSplitHorizontal
@@ -75,6 +77,8 @@ impl super::TermWindow {
                 self.sidebar.hovered_workspace.replace(workspace.clone());
             }
             UIItemType::SidebarNewWorkspace
+            | UIItemType::SidebarGroup(_)
+            | UIItemType::SidebarGroupAdd(_)
             | UIItemType::SidebarNotificationBell
             | UIItemType::SidebarSplitHorizontal
             | UIItemType::SidebarSplitVertical
@@ -428,6 +432,8 @@ impl super::TermWindow {
         let is_sidebar_item = matches!(
             item.item_type,
             UIItemType::SidebarWorkspace(_)
+                | UIItemType::SidebarGroup(_)
+                | UIItemType::SidebarGroupAdd(_)
                 | UIItemType::SidebarCloseWorkspace(_)
                 | UIItemType::SidebarNewWorkspace
                 | UIItemType::SidebarNotificationBell
@@ -451,6 +457,16 @@ impl super::TermWindow {
             }
             UIItemType::SidebarWorkspace(workspace) => {
                 self.mouse_event_sidebar_workspace(workspace, event, context);
+            }
+            UIItemType::SidebarGroup(id) => {
+                self.mouse_event_sidebar_group(id, event, context);
+            }
+            UIItemType::SidebarGroupAdd(id) => {
+                if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+                    self.spawn_workspace_in_group(Some(id));
+                    context.invalidate();
+                }
+                context.set_cursor(Some(MouseCursor::Hand));
             }
             UIItemType::SidebarCloseWorkspace(workspace) => {
                 self.mouse_event_sidebar_close_workspace(workspace, event, context);
@@ -593,6 +609,97 @@ impl super::TermWindow {
         context.set_cursor(Some(MouseCursor::Hand));
     }
 
+    /// A native menu's tracking loop swallows the button release, so the
+    /// press that opened it would otherwise keep the mouse captured by the
+    /// sidebar, and the next click in the terminal would go nowhere.
+    pub fn release_mouse_for_menu(&mut self) {
+        self.current_mouse_capture = None;
+        self.current_mouse_buttons.clear();
+        self.last_mouse_click = None;
+    }
+
+    fn mouse_event_sidebar_group(
+        &mut self,
+        id: String,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        match event.kind {
+            WMEK::Press(MousePress::Left) => {
+                self.toggle_group_collapsed(&id);
+                context.invalidate();
+            }
+            WMEK::Press(MousePress::Right) => {
+                self.show_group_context_menu(id, event, context);
+            }
+            _ => {}
+        }
+        context.set_cursor(Some(MouseCursor::Hand));
+    }
+
+    fn show_group_context_menu(&mut self, id: String, event: MouseEvent, context: &dyn WindowOps) {
+        use crate::termwindow::sidebar::{menu_tags::*, SidebarMenuTarget, COLOR_SWATCHES};
+        use ::window::ContextMenuItem as NativeItem;
+
+        let collapsed = self
+            .sidebar
+            .workspace_configs
+            .group(&id)
+            .is_some_and(|g| g.collapsed);
+        let mut colors = vec![
+            NativeItem::Entry {
+                label: "Reset to Default".into(),
+                tag: GROUP_COLOR_RESET,
+            },
+            NativeItem::Separator,
+        ];
+        for (i, (name, _)) in COLOR_SWATCHES.iter().enumerate() {
+            colors.push(NativeItem::Entry {
+                label: (*name).into(),
+                tag: GROUP_COLOR_FIRST + i,
+            });
+        }
+        let items = vec![
+            NativeItem::Entry {
+                label: "Rename Group…".into(),
+                tag: GROUP_RENAME,
+            },
+            NativeItem::Entry {
+                label: if collapsed { "Expand" } else { "Collapse" }.into(),
+                tag: GROUP_TOGGLE,
+            },
+            NativeItem::Entry {
+                label: "New Workspace in Group".into(),
+                tag: GROUP_NEW_WORKSPACE,
+            },
+            NativeItem::SubMenu {
+                label: "Group Color".into(),
+                items: colors,
+            },
+            NativeItem::Separator,
+            NativeItem::Entry {
+                label: "Move Group Up".into(),
+                tag: GROUP_MOVE_UP,
+            },
+            NativeItem::Entry {
+                label: "Move Group Down".into(),
+                tag: GROUP_MOVE_DOWN,
+            },
+            NativeItem::Separator,
+            NativeItem::Entry {
+                label: "Ungroup".into(),
+                tag: GROUP_UNGROUP,
+            },
+        ];
+        self.sidebar.context_menu_groups.clear();
+        self.sidebar.context_menu_target = Some(SidebarMenuTarget::Group(id));
+        self.release_mouse_for_menu();
+        context.show_context_menu(
+            items,
+            ::window::ScreenPoint::new(event.coords.x, event.coords.y),
+        );
+    }
+
     fn mouse_event_sidebar_new_workspace(&mut self, event: MouseEvent, context: &dyn WindowOps) {
         if matches!(event.kind, WMEK::Press(MousePress::Left)) {
             self.show_new_workspace_prompt();
@@ -652,54 +759,27 @@ impl super::TermWindow {
         event: MouseEvent,
         context: &dyn WindowOps,
     ) {
+        use crate::termwindow::sidebar::{menu_tags::*, SidebarMenuTarget, COLOR_SWATCHES};
         use ::window::ContextMenuItem as NativeItem;
 
-        // Tag layout:
-        //   1     = Rename (nickname prompt)
-        //   2-6   = move/close actions
-        //   7     = open emoji picker modal
-        //   100   = color reset
-        //   101-108 = color swatches
-        const TAG_RENAME: usize = 1;
-        const TAG_MOVE_UP: usize = 2;
-        const TAG_MOVE_DOWN: usize = 3;
-        const TAG_MOVE_TO_TOP: usize = 4;
-        const TAG_MOVE_TO_BOTTOM: usize = 5;
-        const TAG_CLOSE: usize = 6;
-        const TAG_EMOJI_PICK: usize = 7;
-        const TAG_COLOR_RESET: usize = 100;
+        let mut color_items = vec![
+            NativeItem::Entry {
+                label: "Reset to Default".into(),
+                tag: COLOR_RESET,
+            },
+            NativeItem::Separator,
+        ];
+        for (i, (name, _)) in COLOR_SWATCHES.iter().enumerate() {
+            color_items.push(NativeItem::Entry {
+                label: (*name).into(),
+                tag: COLOR_FIRST + i,
+            });
+        }
 
-        let color_items: Vec<NativeItem> = {
-            let mut items = vec![
-                NativeItem::Entry {
-                    label: "Reset to Default".into(),
-                    tag: TAG_COLOR_RESET,
-                },
-                NativeItem::Separator,
-            ];
-            let swatches = [
-                ("Red", 101),
-                ("Orange", 102),
-                ("Yellow", 103),
-                ("Green", 104),
-                ("Cyan", 105),
-                ("Blue", 106),
-                ("Purple", 107),
-                ("Pink", 108),
-            ];
-            for (name, tag) in swatches {
-                items.push(NativeItem::Entry {
-                    label: name.into(),
-                    tag,
-                });
-            }
-            items
-        };
-
-        let menu_items = vec![
+        let mut menu_items = vec![
             NativeItem::Entry {
                 label: "Rename…".into(),
-                tag: TAG_RENAME,
+                tag: RENAME,
             },
             NativeItem::SubMenu {
                 label: "Workspace Color".into(),
@@ -707,34 +787,53 @@ impl super::TermWindow {
             },
             NativeItem::Entry {
                 label: "Workspace Emoji…".into(),
-                tag: TAG_EMOJI_PICK,
+                tag: EMOJI,
             },
+            NativeItem::Separator,
+            NativeItem::SubMenu {
+                label: "Move to Group".into(),
+                items: self.group_membership_menu_items(&workspace),
+            },
+        ];
+        if self
+            .sidebar
+            .workspace_configs
+            .group_id(&workspace)
+            .is_some()
+        {
+            menu_items.push(NativeItem::Entry {
+                label: "Remove from Group".into(),
+                tag: REMOVE_FROM_GROUP,
+            });
+        }
+        menu_items.extend([
             NativeItem::Separator,
             NativeItem::Entry {
                 label: "Move Up".into(),
-                tag: TAG_MOVE_UP,
+                tag: MOVE_UP,
             },
             NativeItem::Entry {
                 label: "Move Down".into(),
-                tag: TAG_MOVE_DOWN,
+                tag: MOVE_DOWN,
             },
             NativeItem::Entry {
                 label: "Move to Top".into(),
-                tag: TAG_MOVE_TO_TOP,
+                tag: MOVE_TO_TOP,
             },
             NativeItem::Entry {
                 label: "Move to Bottom".into(),
-                tag: TAG_MOVE_TO_BOTTOM,
+                tag: MOVE_TO_BOTTOM,
             },
             NativeItem::Separator,
             NativeItem::Entry {
                 label: "Close Workspace".into(),
-                tag: TAG_CLOSE,
+                tag: CLOSE,
             },
-        ];
+        ]);
 
         // Store which workspace this menu is for, so the notification handler can use it
-        self.sidebar.context_menu_workspace = Some(workspace);
+        self.sidebar.context_menu_target = Some(SidebarMenuTarget::Workspace(workspace));
+        self.release_mouse_for_menu();
 
         context.show_context_menu(
             menu_items,

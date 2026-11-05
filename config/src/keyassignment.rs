@@ -539,6 +539,16 @@ pub enum KeyAssignment {
     ToggleSidebar,
     JumpToUnreadNotification,
     PromptNewWorkspace,
+    /// New workspace in the active workspace's sidebar group.
+    SpawnWorkspaceInGroup,
+    /// Menu of sidebar groups to move the active workspace into.
+    MoveWorkspaceToGroup,
+    /// Take the active workspace out of its sidebar group.
+    RemoveWorkspaceFromGroup,
+    /// Rename the active workspace's sidebar group.
+    RenameWorkspaceGroup,
+    /// Collapse or expand the active workspace's sidebar group.
+    ToggleWorkspaceGroupCollapsed,
     ToggleAlwaysOnTop,
     ToggleAlwaysOnBottom,
     SetWindowLevel(WindowLevel),

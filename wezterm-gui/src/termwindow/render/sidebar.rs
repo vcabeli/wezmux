@@ -1,12 +1,9 @@
 use crate::quad::TripleLayerQuadAllocator;
 use crate::termwindow::box_model::*;
-use crate::termwindow::render::corners::{
-    BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
-    TOP_RIGHT_ROUNDED_CORNER,
-};
 use crate::termwindow::sidebar::{
     AgentStatus, AgentType, WorkspaceEntry, WorkspacePullRequest, WorkspacePullRequestStatus,
 };
+use crate::termwindow::workspace_config::WorkspaceGroup;
 use crate::termwindow::{UIItem, UIItemType};
 use crate::utilsprites::RenderMetrics;
 use config::{Dimension, DimensionContext};
@@ -35,14 +32,10 @@ struct SidebarLine {
 /// Resolved sidebar colors, built once per frame from config.
 struct SidebarTheme {
     bg: LinearRgba,
-    card_bg: LinearRgba,
     card_hover: LinearRgba,
-    card_active: LinearRgba,
     text: LinearRgba,
     muted: LinearRgba,
     active_text: LinearRgba,
-    active_muted: LinearRgba,
-    active_secondary: LinearRgba,
     separator: LinearRgba,
     accent: LinearRgba,
     pr_open: LinearRgba,
@@ -54,15 +47,11 @@ impl SidebarTheme {
     fn from_config(colors: &config::SidebarColors) -> Self {
         Self {
             bg: colors.bg.to_linear(),
-            card_bg: colors.card_bg.to_linear(),
             card_hover: colors.card_hover.to_linear(),
-            card_active: colors.accent.to_linear(),
             text: colors.text.to_linear(),
             muted: colors.muted.to_linear(),
-            // Active card: white text at full/partial opacity
+            // The active card's title stands out in full white.
             active_text: LinearRgba::with_srgba(255, 255, 255, 255),
-            active_muted: LinearRgba::with_srgba(255, 255, 255, 191),
-            active_secondary: LinearRgba::with_srgba(255, 255, 255, 148),
             separator: colors.separator.to_linear(),
             accent: colors.accent.to_linear(),
             pr_open: colors.pr_open.to_linear(),
@@ -333,16 +322,7 @@ fn agent_status_label(status: AgentStatus) -> &'static str {
     }
 }
 
-fn sidebar_status_color(status: AgentStatus, is_active: bool, theme: &SidebarTheme) -> LinearRgba {
-    if is_active {
-        // On active card, use white at varying opacity
-        return match status {
-            AgentStatus::NeedsInput => LinearRgba::with_srgba(255, 255, 255, 204),
-            AgentStatus::Idle => LinearRgba::with_srgba(255, 255, 255, 204),
-            AgentStatus::Working => LinearRgba::with_srgba(255, 255, 255, 204),
-            AgentStatus::Unknown => theme.active_muted,
-        };
-    }
+fn sidebar_status_color(status: AgentStatus, theme: &SidebarTheme) -> LinearRgba {
     match status {
         AgentStatus::NeedsInput => theme.accent,
         AgentStatus::Idle => LinearRgba::with_srgba(76, 197, 124, 255),
@@ -459,6 +439,58 @@ fn tint_linear(bg: LinearRgba, accent: LinearRgba, t: f32) -> LinearRgba {
 }
 
 /// Build an Element tree for one workspace card.
+/// Card geometry, in physical pixels (like the rest of the sidebar, sized
+/// for a Retina display).  Lines are a single physical pixel: cards have no
+/// fill at rest and a 1px outline in the accent when active.
+const CARD_MARGIN_X: f32 = 10.0;
+const CARD_MARGIN_Y: f32 = 3.0;
+const CARD_PAD_X: f32 = 14.0;
+const CARD_PAD_Y: f32 = 11.0;
+const CARD_BORDER: f32 = 1.0;
+/// From the sidebar's left edge to a group's rail.
+const RAIL_X: f32 = 24.0;
+/// Length of the tick joining the rail to a member card.
+const TICK_WIDTH: f32 = 12.0;
+/// Size of a group's swatch.
+const SWATCH: f32 = 13.0;
+
+fn px(v: f32) -> Dimension {
+    Dimension::Pixels(v)
+}
+
+fn sides(left: f32, right: f32, top: f32, bottom: f32) -> BoxDimension {
+    BoxDimension {
+        left: px(left),
+        right: px(right),
+        top: px(top),
+        bottom: px(bottom),
+    }
+}
+
+fn all_borders(color: LinearRgba) -> BorderColor {
+    BorderColor {
+        left: color,
+        top: color,
+        right: color,
+        bottom: color,
+    }
+}
+
+/// A box with no content, used for the rail's ticks and group swatches.
+fn spacer(font: &Rc<LoadedFont>, width: f32, height: f32, bg: LinearRgba) -> Element {
+    Element::new(font, ElementContent::Children(vec![]))
+        .display(DisplayType::Inline)
+        .min_width(Some(px(width)))
+        .min_height(Some(px(height)))
+        .colors(ElementColors {
+            border: BorderColor::default(),
+            bg: bg.into(),
+            text: InheritableColor::Inherited,
+        })
+}
+
+/// One workspace card, `content_width` pixels wide inside its padding.
+/// The caller places it (display and margins).
 fn build_card_element(
     font: &Rc<LoadedFont>,
     body_font: &Rc<LoadedFont>,
@@ -466,18 +498,19 @@ fn build_card_element(
     entry: &WorkspaceEntry,
     text_cols: usize,
     mono_cols: usize,
-    card_width: f32,
+    content_width: f32,
     theme: &SidebarTheme,
     milliseconds: u128,
 ) -> Element {
     let is_active = entry.is_active;
-    let custom_accent_bg = entry.accent_color.as_deref().map(hex_to_linear);
+    let custom_accent = entry.accent_color.as_deref().map(hex_to_linear);
+    let accent = custom_accent.unwrap_or(theme.accent);
     let card_bg = if is_active {
-        custom_accent_bg.unwrap_or(theme.card_active)
-    } else if let Some(accent) = custom_accent_bg {
-        tint_linear(theme.card_bg, accent, 0.18)
+        tint_linear(theme.bg, accent, 0.12)
+    } else if let Some(accent) = custom_accent {
+        tint_linear(theme.bg, accent, 0.08)
     } else {
-        theme.card_bg
+        theme.bg
     };
     let title_color = if is_active {
         theme.active_text
@@ -492,29 +525,15 @@ fn build_card_element(
     if let Some(ref nickname) = entry.display_name {
         // Title font is proportional (Roboto), so we can't perfectly center
         // with leading spaces. We pad based on text_cols and approximate the
-        // ratio between a space and an average glyph. Looks visually centered
-        // for typical nicknames and keeps the implementation a few lines.
+        // ratio between a space and an average glyph.
         let visible_len = nickname.chars().count();
-        // text_cols was sized using avg_char_width ≈ 0.55 of cell width; a
-        // space at ~0.4 of cell width fits ~1.4 chars of visible content per
-        // leading-space character. Approximate as 1 space per ~0.7 of a glyph.
         let target_pad_chars = text_cols.saturating_sub(visible_len) as f32 * 0.5;
         let pad = (target_pad_chars * 1.4).round() as usize;
         let nickname_text = format!("{}{}", " ".repeat(pad), nickname);
-        let nickname_color = if is_active {
-            theme.active_text
-        } else {
-            theme.text
-        };
         card_children.push(
-            text_element_fg(font, &nickname_text, nickname_color)
+            text_element_fg(font, &nickname_text, title_color)
                 .display(DisplayType::Block)
-                .margin(BoxDimension {
-                    left: Dimension::Pixels(0.),
-                    right: Dimension::Pixels(0.),
-                    top: Dimension::Pixels(0.),
-                    bottom: Dimension::Pixels(4.),
-                }),
+                .margin(sides(0., 0., 0., 4.)),
         );
     }
 
@@ -547,24 +566,18 @@ fn build_card_element(
         } else {
             entry.unread_count.to_string()
         };
-        let badge_bg = if is_active {
-            LinearRgba::with_srgba(255, 255, 255, 64)
-        } else {
-            theme.accent
-        };
+        // Outlined, not filled: the sidebar draws with 1px lines.
         title_parts.push(
-            Element::new(font, ElementContent::Text(format!(" {} ", count_text)))
+            Element::new(mono_font, ElementContent::Text(count_text))
                 .colors(ElementColors {
-                    border: BorderColor::default(),
-                    bg: badge_bg.into(),
-                    text: LinearRgba::with_srgba(255, 255, 255, 255).into(),
+                    border: all_borders(theme.accent),
+                    bg: InheritableColor::Inherited,
+                    text: theme.accent.into(),
                 })
-                .margin(BoxDimension {
-                    left: Dimension::Pixels(0.),
-                    right: Dimension::Pixels(6.),
-                    top: Dimension::Pixels(0.),
-                    bottom: Dimension::Pixels(0.),
-                }),
+                .border(BoxDimension::new(px(1.)))
+                .padding(sides(4., 4., 0., 0.))
+                .vertical_align(VerticalAlign::Middle)
+                .margin(sides(0., 6., 0., 0.)),
         );
     }
     title_parts.push(text_element_fg(font, &title_text, title_color));
@@ -583,122 +596,161 @@ fn build_card_element(
     let body_lines = sidebar_entry_body_lines(entry, text_cols, mono_cols);
     for line in &body_lines {
         let (line_font, fg) = match line.style {
-            SidebarLineStyle::Preview => {
-                let fg = if is_active {
-                    theme.active_muted
-                } else {
-                    theme.muted
-                };
-                (body_font, fg)
+            SidebarLineStyle::Preview => (body_font, theme.muted),
+            SidebarLineStyle::Meta | SidebarLineStyle::Secondary => (mono_font, theme.muted),
+            SidebarLineStyle::PullRequest(status) => {
+                (mono_font, sidebar_pull_request_color(status, theme))
             }
-            SidebarLineStyle::Meta | SidebarLineStyle::Secondary => {
-                let fg = if is_active {
-                    theme.active_secondary
-                } else {
-                    theme.muted
-                };
-                (mono_font, fg)
-            }
-            SidebarLineStyle::PullRequest(status) => (
-                mono_font,
-                sidebar_pull_request_color(status, is_active, theme),
-            ),
             SidebarLineStyle::StatusIndicator(status) => {
-                (body_font, sidebar_status_color(status, is_active, theme))
+                (body_font, sidebar_status_color(status, theme))
             }
         };
         card_children.push(
             text_element_fg(line_font, &line.text, fg)
                 .display(DisplayType::Block)
-                .margin(BoxDimension {
-                    left: Dimension::Pixels(0.),
-                    right: Dimension::Pixels(0.),
-                    top: Dimension::Pixels(2.),
-                    bottom: Dimension::Pixels(0.),
-                }),
+                .margin(sides(0., 0., 2., 0.)),
         );
     }
 
-    // card_width minus margin (6+6=12) to get inner width
-    let inner_width = (card_width - 12.0).max(1.0);
-
-    // Left accent bar: 3px on active cards, or when a custom color is set
-    let custom_accent = entry.accent_color.as_deref().map(hex_to_linear);
-    let accent = custom_accent.unwrap_or(theme.accent);
-
-    let hover_colors = if !is_active {
-        let hover_border = if custom_accent.is_some() {
-            BorderColor {
-                left: accent,
-                top: LinearRgba::TRANSPARENT,
-                right: LinearRgba::TRANSPARENT,
-                bottom: LinearRgba::TRANSPARENT,
-            }
-        } else {
-            BorderColor::default()
-        };
-        let hover_bg = if let Some(accent) = custom_accent {
-            tint_linear(theme.card_hover, accent, 0.28)
-        } else {
-            theme.card_hover
-        };
-        Some(ElementColors {
-            border: hover_border,
-            bg: hover_bg.into(),
-            text: InheritableColor::Inherited,
-        })
+    let border_color = if is_active {
+        all_borders(accent)
     } else {
-        None
+        all_borders(LinearRgba::TRANSPARENT)
     };
-
-    let has_accent_bar = is_active || custom_accent.is_some();
-    let border_color = if has_accent_bar {
-        BorderColor {
-            left: accent,
-            top: LinearRgba::TRANSPARENT,
-            right: LinearRgba::TRANSPARENT,
-            bottom: LinearRgba::TRANSPARENT,
+    let hover_colors = (!is_active).then(|| ElementColors {
+        border: all_borders(LinearRgba::TRANSPARENT),
+        bg: match custom_accent {
+            Some(accent) => tint_linear(theme.card_hover, accent, 0.18),
+            None => theme.card_hover,
         }
-    } else {
-        BorderColor::default()
-    };
-    let border_width = if has_accent_bar {
-        BoxDimension {
-            left: Dimension::Pixels(3.),
-            top: Dimension::Pixels(0.),
-            right: Dimension::Pixels(0.),
-            bottom: Dimension::Pixels(0.),
-        }
-    } else {
-        BoxDimension::new(Dimension::Pixels(0.))
-    };
-
-    let card_corners = None;
+        .into(),
+        text: InheritableColor::Inherited,
+    });
 
     Element::new(font, ElementContent::Children(card_children))
         .display(DisplayType::Block)
         .item_type(UIItemType::SidebarWorkspace(entry.name.clone()))
-        .min_width(Some(Dimension::Pixels(inner_width)))
-        .padding(BoxDimension {
-            left: Dimension::Pixels(12.),
-            right: Dimension::Pixels(12.),
-            top: Dimension::Pixels(10.),
-            bottom: Dimension::Pixels(10.),
-        })
-        .margin(BoxDimension {
-            left: Dimension::Pixels(6.),
-            right: Dimension::Pixels(6.),
-            top: Dimension::Pixels(2.),
-            bottom: Dimension::Pixels(2.),
-        })
-        .border(border_width)
-        .border_corners(card_corners)
+        .min_width(Some(px(content_width.max(1.0))))
+        .max_width(Some(px(
+            content_width.max(1.0) + 2.0 * (CARD_PAD_X + CARD_BORDER)
+        )))
+        .padding(sides(CARD_PAD_X, CARD_PAD_X, CARD_PAD_Y, CARD_PAD_Y + 1.0))
+        .border(BoxDimension::new(px(CARD_BORDER)))
         .colors(ElementColors {
             border: border_color,
             bg: card_bg.into(),
             text: InheritableColor::Inherited,
         })
         .hover_colors(hover_colors)
+}
+
+/// A group's header row: swatch, name, member count; on the right the
+/// "+" button, the chevron and, when collapsed, what needs attention.
+fn build_group_header(
+    font: &Rc<LoadedFont>,
+    body_font: &Rc<LoadedFont>,
+    mono_font: &Rc<LoadedFont>,
+    group: &WorkspaceGroup,
+    members: &[WorkspaceEntry],
+    text_cols: usize,
+    content_width: f32,
+    theme: &SidebarTheme,
+) -> Element {
+    let color = group_color(group, theme);
+    let swatch_fill = if group.collapsed { theme.bg } else { color };
+    let swatch = spacer(font, SWATCH, SWATCH, swatch_fill)
+        .border(BoxDimension::new(px(1.)))
+        .colors(ElementColors {
+            border: all_borders(color),
+            bg: swatch_fill.into(),
+            text: InheritableColor::Inherited,
+        })
+        .vertical_align(VerticalAlign::Middle)
+        .margin(sides(0., 12., 0., 0.));
+
+    let count = members.len().to_string();
+    let name = truncate_to_cells(&group.name, text_cols.saturating_sub(count.len() + 8));
+    let mut kids = vec![
+        swatch,
+        text_element_fg(font, &name, theme.text).vertical_align(VerticalAlign::Middle),
+        text_element_fg(mono_font, &count, theme.muted)
+            .vertical_align(VerticalAlign::Middle)
+            .margin(sides(10., 0., 0., 0.)),
+    ];
+
+    // Floats are placed right to left in this order.
+    kids.push(
+        text_element_fg(body_font, "+", theme.muted)
+            .float(Float::Right)
+            .vertical_align(VerticalAlign::Middle)
+            .item_type(UIItemType::SidebarGroupAdd(group.id.clone()))
+            .padding(sides(10., 10., 2., 2.))
+            .hover_colors(Some(ElementColors {
+                border: BorderColor::default(),
+                bg: LinearRgba::with_srgba(255, 255, 255, 25).into(),
+                text: theme.text.into(),
+            })),
+    );
+    let chevron = if group.collapsed {
+        "\u{25B8}"
+    } else {
+        "\u{25BE}"
+    }; // ▸ ▾
+    kids.push(
+        text_element_fg(body_font, chevron, theme.muted)
+            .float(Float::Right)
+            .vertical_align(VerticalAlign::Middle)
+            .padding(sides(8., 4., 0., 0.)),
+    );
+    if group.collapsed {
+        let count_of = |status: AgentStatus| {
+            members
+                .iter()
+                .filter(|e| e.agent.as_ref().is_some_and(|a| a.status == status))
+                .count()
+        };
+        let summary = [AgentStatus::NeedsInput, AgentStatus::Working]
+            .iter()
+            .map(|&status| (status, count_of(status)))
+            .filter(|(_, n)| *n > 0)
+            .map(|(status, n)| (status, format!("{} {n}", agent_status_symbol(status))))
+            .collect::<Vec<_>>();
+        for (status, text) in summary.into_iter().rev() {
+            kids.push(
+                text_element_fg(body_font, &text, sidebar_status_color(status, theme))
+                    .float(Float::Right)
+                    .vertical_align(VerticalAlign::Middle)
+                    .padding(sides(10., 0., 0., 0.)),
+            );
+        }
+    }
+
+    let pad_left = RAIL_X - (SWATCH / 2.0).floor();
+    // Full width, so the floats sit at the right edge.
+    let inner = (content_width - pad_left - CARD_MARGIN_X).max(1.0);
+    Element::new(font, ElementContent::Children(kids))
+        .display(DisplayType::Block)
+        .item_type(UIItemType::SidebarGroup(group.id.clone()))
+        .min_width(Some(px(inner)))
+        .padding(sides(pad_left, CARD_MARGIN_X, 16., 7.))
+        .colors(ElementColors {
+            border: BorderColor::default(),
+            bg: InheritableColor::Inherited,
+            text: InheritableColor::Inherited,
+        })
+        .hover_colors(Some(ElementColors {
+            border: BorderColor::default(),
+            bg: LinearRgba::with_srgba(255, 255, 255, 10).into(),
+            text: InheritableColor::Inherited,
+        }))
+}
+
+fn group_color(group: &WorkspaceGroup, theme: &SidebarTheme) -> LinearRgba {
+    group
+        .color
+        .as_deref()
+        .map(hex_to_linear)
+        .unwrap_or(theme.accent)
 }
 
 /// Period of one sidebar spinner frame.
@@ -709,6 +761,7 @@ const SPINNER_FRAME_MS: u128 = 120;
 #[derive(Debug, Clone, PartialEq)]
 struct SidebarRenderKey {
     entries: Vec<WorkspaceEntry>,
+    groups: Vec<WorkspaceGroup>,
     origin_x: f32,
     origin_y: f32,
     content_width: f32,
@@ -804,6 +857,7 @@ impl crate::TermWindow {
 
         let key = SidebarRenderKey {
             entries,
+            groups: self.sidebar.workspace_configs.groups.clone(),
             origin_x: sidebar_x,
             origin_y: sidebar_y,
             content_width,
@@ -889,20 +943,26 @@ impl crate::TermWindow {
         let body_font = self.fonts.sidebar_body_font()?;
         let mono_font = self.fonts.sidebar_meta_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-        // Available text width inside cards:
-        // sidebar - handle - card margin (6+6) - card padding (12+12) - border (3)
-        let card_chrome = 6.0 + 6.0 + 12.0 + 12.0 + 3.0;
-        let text_width = (content_width - card_chrome).max(1.0);
+        // Text width inside cards: top-level cards sit between margins;
+        // group members also give up the rail's indent and tick.
+        let card_inside = 2.0 * (CARD_PAD_X + CARD_BORDER);
+        let top_content = (content_width - 2.0 * CARD_MARGIN_X - card_inside).max(1.0);
+        let member_content =
+            (content_width - RAIL_X - 1.0 - TICK_WIDTH - CARD_MARGIN_X - card_inside).max(1.0);
+        let text_width = top_content;
         // The body font is proportional (Roboto) so cell_size.width is the
         // widest glyph. Average character width is ~55% of that for Latin text.
         let body_metrics = RenderMetrics::with_font_metrics(&body_font.metrics());
         let avg_char_width = body_metrics.cell_size.width as f32 * 0.55;
-        let text_cols = (text_width / avg_char_width).floor().max(1.0) as usize;
+        let cols_for = |w: f32| (w / avg_char_width).floor().max(1.0) as usize;
+        let text_cols = cols_for(text_width);
+        let member_text_cols = cols_for(member_content);
         // Mono font has fixed-width characters — use cell_size directly
         let mono_metrics = RenderMetrics::with_font_metrics(&mono_font.metrics());
-        let mono_cols = (text_width / mono_metrics.cell_size.width as f32)
-            .floor()
-            .max(1.0) as usize;
+        let mono_cols_for =
+            |w: f32| (w / mono_metrics.cell_size.width as f32).floor().max(1.0) as usize;
+        let mono_cols = mono_cols_for(text_width);
+        let member_mono_cols = mono_cols_for(member_content);
 
         // Build Element tree
         let mut root_children: Vec<Element> = vec![];
@@ -962,20 +1022,119 @@ impl crate::TermWindow {
                 }),
         );
 
-        // Workspace cards
+        // Workspace cards, with each group's header and rail
+        let tick_top =
+            (CARD_MARGIN_Y + CARD_BORDER + CARD_PAD_Y + metrics.cell_size.height as f32 / 2.0)
+                .round();
         let milliseconds = key.spinner_frame.unwrap_or(0) * SPINNER_FRAME_MS;
-        for entry in &key.entries {
-            root_children.push(build_card_element(
+        let entries = &key.entries;
+        let mut i = 0;
+        while i < entries.len() {
+            let entry = &entries[i];
+            let group = entry
+                .group
+                .as_deref()
+                .and_then(|id| key.groups.iter().find(|g| g.id == id));
+            let Some(group) = group else {
+                root_children.push(
+                    build_card_element(
+                        &font,
+                        &body_font,
+                        &mono_font,
+                        entry,
+                        text_cols,
+                        mono_cols,
+                        top_content,
+                        theme,
+                        milliseconds,
+                    )
+                    .margin(sides(
+                        CARD_MARGIN_X,
+                        CARD_MARGIN_X,
+                        CARD_MARGIN_Y,
+                        CARD_MARGIN_Y,
+                    )),
+                );
+                i += 1;
+                continue;
+            };
+
+            let len = entries[i..]
+                .iter()
+                .take_while(|e| e.group.as_deref() == Some(group.id.as_str()))
+                .count();
+            let members = &entries[i..i + len];
+            i += len;
+
+            root_children.push(build_group_header(
                 &font,
                 &body_font,
                 &mono_font,
-                entry,
+                group,
+                members,
                 text_cols,
-                mono_cols,
                 content_width,
                 theme,
-                milliseconds,
             ));
+
+            // A collapsed group still shows the workspace you're in.
+            let rail = tint_linear(theme.bg, group_color(group, theme), 0.45);
+            let rows: Vec<Element> = members
+                .iter()
+                .filter(|e| !group.collapsed || e.is_active)
+                .map(|entry| {
+                    let tick_color = if entry.is_active {
+                        entry
+                            .accent_color
+                            .as_deref()
+                            .map(hex_to_linear)
+                            .unwrap_or(theme.accent)
+                    } else {
+                        rail
+                    };
+                    // Level with the middle of the card's title line.
+                    let tick = spacer(&font, TICK_WIDTH, 1.0, tick_color)
+                        .margin(sides(0., 0., tick_top, 0.));
+                    let card = build_card_element(
+                        &font,
+                        &body_font,
+                        &mono_font,
+                        entry,
+                        member_text_cols,
+                        member_mono_cols,
+                        member_content,
+                        theme,
+                        milliseconds,
+                    )
+                    .display(DisplayType::Inline)
+                    .margin(sides(
+                        0.,
+                        CARD_MARGIN_X,
+                        CARD_MARGIN_Y,
+                        CARD_MARGIN_Y,
+                    ));
+                    Element::new(&font, ElementContent::Children(vec![tick, card]))
+                        .display(DisplayType::Block)
+                })
+                .collect();
+            if !rows.is_empty() {
+                root_children.push(
+                    Element::new(&font, ElementContent::Children(rows))
+                        .display(DisplayType::Block)
+                        .margin(sides(RAIL_X, 0., 0., 6.))
+                        .border(sides(1., 0., 0., 0.))
+                        .colors(ElementColors {
+                            border: BorderColor {
+                                left: rail,
+                                top: LinearRgba::TRANSPARENT,
+                                right: LinearRgba::TRANSPARENT,
+                                bottom: LinearRgba::TRANSPARENT,
+                            },
+                            bg: InheritableColor::Inherited,
+                            text: InheritableColor::Inherited,
+                        }),
+                );
+            }
         }
 
         let root = Element::new(&font, ElementContent::Children(root_children))
@@ -1026,42 +1185,48 @@ impl crate::TermWindow {
                 }))
                 .item_type(UIItemType::SidebarNewWorkspace);
 
-        let new_ws_button = Element::new(&font, ElementContent::Children(vec![new_ws_label]))
-            .display(DisplayType::Block)
-            .min_width(Some(Dimension::Pixels(content_width.max(1.0))))
-            .padding(BoxDimension {
-                left: Dimension::Pixels(14.),
-                right: Dimension::Pixels(14.),
-                top: Dimension::Pixels(10.),
-                bottom: Dimension::Pixels(10.),
-            })
-            .border(BoxDimension {
-                left: Dimension::Pixels(0.),
-                right: Dimension::Pixels(0.),
-                top: Dimension::Pixels(1.),
-                bottom: Dimension::Pixels(0.),
-            })
-            .colors(ElementColors {
-                border: BorderColor {
-                    top: theme.separator,
-                    bottom: LinearRgba::TRANSPARENT,
-                    left: LinearRgba::TRANSPARENT,
-                    right: LinearRgba::TRANSPARENT,
-                },
-                bg: theme.bg.into(),
-                text: InheritableColor::Inherited,
-            })
-            .hover_colors(Some(ElementColors {
-                border: BorderColor {
-                    top: theme.separator,
-                    bottom: LinearRgba::TRANSPARENT,
-                    left: LinearRgba::TRANSPARENT,
-                    right: LinearRgba::TRANSPARENT,
-                },
-                bg: LinearRgba::with_srgba(255, 255, 255, 15).into(),
-                text: InheritableColor::Inherited,
-            }))
-            .item_type(UIItemType::SidebarNewWorkspace);
+        let new_ws_hint = text_element_fg(&mono_font, "\u{2318}\u{21E7}N", theme.muted)
+            .float(Float::Right)
+            .vertical_align(VerticalAlign::Middle);
+        let new_ws_button = Element::new(
+            &font,
+            ElementContent::Children(vec![new_ws_label, new_ws_hint]),
+        )
+        .display(DisplayType::Block)
+        .min_width(Some(Dimension::Pixels(content_width.max(1.0))))
+        .padding(BoxDimension {
+            left: Dimension::Pixels(14.),
+            right: Dimension::Pixels(14.),
+            top: Dimension::Pixels(10.),
+            bottom: Dimension::Pixels(10.),
+        })
+        .border(BoxDimension {
+            left: Dimension::Pixels(0.),
+            right: Dimension::Pixels(0.),
+            top: Dimension::Pixels(1.),
+            bottom: Dimension::Pixels(0.),
+        })
+        .colors(ElementColors {
+            border: BorderColor {
+                top: theme.separator,
+                bottom: LinearRgba::TRANSPARENT,
+                left: LinearRgba::TRANSPARENT,
+                right: LinearRgba::TRANSPARENT,
+            },
+            bg: theme.bg.into(),
+            text: InheritableColor::Inherited,
+        })
+        .hover_colors(Some(ElementColors {
+            border: BorderColor {
+                top: theme.separator,
+                bottom: LinearRgba::TRANSPARENT,
+                left: LinearRgba::TRANSPARENT,
+                right: LinearRgba::TRANSPARENT,
+            },
+            bg: LinearRgba::with_srgba(255, 255, 255, 15).into(),
+            text: InheritableColor::Inherited,
+        }))
+        .item_type(UIItemType::SidebarNewWorkspace);
 
         let button_y = key.origin_y + scrollable_height;
 
@@ -1162,12 +1327,8 @@ fn wrap_text_to_cells(text: &str, cols: usize, max_lines: usize) -> Vec<String> 
 
 fn sidebar_pull_request_color(
     status: WorkspacePullRequestStatus,
-    is_active: bool,
     theme: &SidebarTheme,
 ) -> LinearRgba {
-    if is_active {
-        return theme.active_muted;
-    }
     match status {
         WorkspacePullRequestStatus::Open => theme.pr_open,
         WorkspacePullRequestStatus::Merged => theme.pr_merged,
@@ -1320,6 +1481,7 @@ mod test {
             accent_color: None,
             emoji: None,
             display_name: None,
+            group: None,
         };
 
         // When no agent is running, stale notification previews are suppressed.
@@ -1391,6 +1553,7 @@ mod test {
             accent_color: None,
             emoji: None,
             display_name: None,
+            group: None,
         }
     }
 
@@ -1565,6 +1728,7 @@ mod test {
             accent_color: None,
             emoji: None,
             display_name: None,
+            group: None,
         };
 
         assert_eq!(

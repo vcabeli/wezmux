@@ -13,6 +13,7 @@ use window::WindowOps;
 use crate::frontend::WorkspaceSwitcher;
 use crate::scripting::guiwin::GuiWin;
 use crate::spawn::SpawnWhere;
+use crate::termwindow::UIItemType;
 use procinfo::LocalProcessInfo;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -74,13 +75,63 @@ pub struct SidebarState {
     cached_pane_facts_generation: u64,
     /// Last detected agent type per pane — survives transient process detection failures.
     pub last_known_agents: HashMap<PaneId, AgentType>,
-    /// Workspace targeted by the currently open native context menu, if any.
-    pub context_menu_workspace: Option<String>,
+    /// What the currently open native context menu acts on, if any.
+    pub context_menu_target: Option<SidebarMenuTarget>,
+    /// Group ids behind the "move to group" entries of the open menu, by
+    /// their position (`menu_tags::MOVE_TO_GROUP + index`).
+    pub context_menu_groups: Vec<String>,
     /// Per-workspace customizations (display name, accent color, ordering).
     pub workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs,
     /// The laid-out sidebar from the last frame, reused until its inputs change.
     pub render_cache: Option<crate::termwindow::render::sidebar::SidebarRenderCache>,
 }
+
+/// The thing a sidebar context menu was opened on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarMenuTarget {
+    Workspace(String),
+    Group(String),
+}
+
+/// Tags of native context menu entries; the selection comes back as a tag.
+pub mod menu_tags {
+    pub const RENAME: usize = 1;
+    pub const MOVE_UP: usize = 2;
+    pub const MOVE_DOWN: usize = 3;
+    pub const MOVE_TO_TOP: usize = 4;
+    pub const MOVE_TO_BOTTOM: usize = 5;
+    pub const CLOSE: usize = 6;
+    pub const EMOJI: usize = 7;
+    pub const COLOR_RESET: usize = 100;
+    /// 101..=108: `COLOR_SWATCHES`.
+    pub const COLOR_FIRST: usize = 101;
+    pub const NEW_GROUP: usize = 200;
+    pub const REMOVE_FROM_GROUP: usize = 201;
+    /// 210 + index into `SidebarState::context_menu_groups`.
+    pub const MOVE_TO_GROUP: usize = 210;
+    pub const MOVE_TO_GROUP_LAST: usize = 299;
+    pub const GROUP_RENAME: usize = 300;
+    pub const GROUP_TOGGLE: usize = 301;
+    pub const GROUP_NEW_WORKSPACE: usize = 302;
+    pub const GROUP_MOVE_UP: usize = 303;
+    pub const GROUP_MOVE_DOWN: usize = 304;
+    pub const GROUP_UNGROUP: usize = 305;
+    pub const GROUP_COLOR_RESET: usize = 400;
+    /// 401..=408: `COLOR_SWATCHES`.
+    pub const GROUP_COLOR_FIRST: usize = 401;
+}
+
+/// Swatches offered by the "Color" submenus, in menu order.
+pub const COLOR_SWATCHES: &[(&str, &str)] = &[
+    ("Red", "#ff6b6b"),
+    ("Orange", "#ffa94d"),
+    ("Yellow", "#ffd43b"),
+    ("Green", "#69db7c"),
+    ("Cyan", "#38d9a9"),
+    ("Blue", "#4dabf7"),
+    ("Purple", "#b197fc"),
+    ("Pink", "#f783ac"),
+];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceMetadata {
@@ -315,7 +366,8 @@ impl SidebarState {
             pane_facts_generation: 0,
             cached_pane_facts_generation: 0,
             last_known_agents: HashMap::new(),
-            context_menu_workspace: None,
+            context_menu_target: None,
+            context_menu_groups: vec![],
             workspace_configs: crate::termwindow::workspace_config::WorkspaceConfigs::load(),
             render_cache: None,
         }
@@ -395,6 +447,9 @@ pub struct WorkspaceEntry {
     /// User-supplied nickname. Rendered as a centered header above the title
     /// line so it stays visible even when an agent overrides the title.
     pub display_name: Option<String>,
+    /// Id of the sidebar group the workspace is in.  Entries come in
+    /// display order, so a group's members are consecutive.
+    pub group: Option<String>,
 }
 
 pub fn configured_pixel_width(config: &ConfigHandle, context: DimensionContext) -> usize {
@@ -432,7 +487,7 @@ impl crate::TermWindow {
     pub fn ordered_workspaces(&self) -> Vec<String> {
         let mux = Mux::get();
         let raw = mux.iter_workspaces();
-        self.sidebar.workspace_configs.apply_order(&raw)
+        self.sidebar.workspace_configs.display_order(&raw)
     }
 
     pub fn tab_bar_pixel_bounds(&self) -> (f32, f32) {
@@ -523,7 +578,10 @@ impl crate::TermWindow {
         let mut pane_leaders: Vec<(PaneId, u32)> = vec![];
 
         let mux_workspaces = mux.iter_workspaces();
-        let ordered_names = self.sidebar.workspace_configs.apply_order(&mux_workspaces);
+        let ordered_names = self
+            .sidebar
+            .workspace_configs
+            .display_order(&mux_workspaces);
         let entries: Vec<_> = ordered_names
             .into_iter()
             .map(|name| {
@@ -642,6 +700,11 @@ impl crate::TermWindow {
                 };
                 let accent_color = self.sidebar.workspace_configs.accent_color(&name);
                 let emoji = self.sidebar.workspace_configs.emoji(&name);
+                let group = self
+                    .sidebar
+                    .workspace_configs
+                    .group_id(&name)
+                    .map(str::to_string);
 
                 let foreground_process_name =
                     active_pane_facts.and_then(|facts| facts.foreground_process_name.clone());
@@ -666,6 +729,7 @@ impl crate::TermWindow {
                     accent_color,
                     emoji,
                     display_name,
+                    group,
                 }
             })
             .collect();
@@ -773,72 +837,309 @@ impl crate::TermWindow {
         }
     }
 
-    /// Handle a native context menu selection.
-    /// Tags: 1=Rename, 2=MoveUp, 3=MoveDown, 4=MoveToTop, 5=MoveToBottom,
-    ///        6=Close, 7=EmojiPicker, 100=ColorReset, 101-108=Color swatches
+    /// Handle a native context menu selection; `tag` is one of `menu_tags`.
     pub fn handle_context_menu_selection(&mut self, tag: usize, window: &::window::Window) {
-        let workspace = match self.sidebar.context_menu_workspace.take() {
-            Some(name) => name,
-            None => return,
-        };
-
-        const COLOR_HEXES: &[&str] = &[
-            "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9", "#4dabf7", "#b197fc", "#f783ac",
-        ];
-
-        match tag {
-            1 => {
-                self.show_workspace_nickname_prompt(workspace.clone());
-                // The prompt handles its own save + invalidate when the user submits.
-                return;
-            }
-            2 => {
-                let all = Mux::get().iter_workspaces();
-                self.sidebar.workspace_configs.move_up(&workspace, &all);
-            }
-            3 => {
-                let all = Mux::get().iter_workspaces();
-                self.sidebar.workspace_configs.move_down(&workspace, &all);
-            }
-            4 => {
-                let all = Mux::get().iter_workspaces();
-                self.sidebar.workspace_configs.move_to_top(&workspace, &all);
-            }
-            5 => {
-                let all = Mux::get().iter_workspaces();
-                self.sidebar
-                    .workspace_configs
-                    .move_to_bottom(&workspace, &all);
-            }
-            6 => {
-                self.close_workspace_by_name(&workspace);
-            }
-            7 => {
-                self.show_workspace_emoji_picker(workspace.clone());
-                // Modal handles its own save + invalidate on selection.
-                return;
-            }
-            100 => {
-                self.sidebar
-                    .workspace_configs
-                    .set_accent_color(&workspace, None);
-            }
-            101..=108 => {
-                let idx = tag - 101;
-                if let Some(hex) = COLOR_HEXES.get(idx) {
-                    self.sidebar
-                        .workspace_configs
-                        .set_accent_color(&workspace, Some(hex.to_string()));
+        use menu_tags::*;
+        let groups = std::mem::take(&mut self.sidebar.context_menu_groups);
+        let all = Mux::get().iter_workspaces();
+        match self.sidebar.context_menu_target.take() {
+            Some(SidebarMenuTarget::Workspace(workspace)) => {
+                let configs = &mut self.sidebar.workspace_configs;
+                match tag {
+                    RENAME => {
+                        // The prompt saves and repaints when submitted.
+                        self.show_workspace_nickname_prompt(workspace);
+                        return;
+                    }
+                    MOVE_UP => configs.move_up(&workspace, &all),
+                    MOVE_DOWN => configs.move_down(&workspace, &all),
+                    MOVE_TO_TOP => configs.move_to_top(&workspace, &all),
+                    MOVE_TO_BOTTOM => configs.move_to_bottom(&workspace, &all),
+                    CLOSE => self.close_workspace_by_name(&workspace),
+                    EMOJI => {
+                        // The picker saves and repaints on selection.
+                        self.show_workspace_emoji_picker(workspace);
+                        return;
+                    }
+                    COLOR_RESET => configs.set_accent_color(&workspace, None),
+                    _ if (COLOR_FIRST..COLOR_FIRST + COLOR_SWATCHES.len()).contains(&tag) => {
+                        let hex = COLOR_SWATCHES[tag - COLOR_FIRST].1;
+                        configs.set_accent_color(&workspace, Some(hex.to_string()));
+                    }
+                    NEW_GROUP => {
+                        self.show_new_group_prompt(workspace);
+                        return;
+                    }
+                    REMOVE_FROM_GROUP => configs.set_workspace_group(&workspace, None, &all),
+                    MOVE_TO_GROUP..=MOVE_TO_GROUP_LAST => {
+                        if let Some(id) = groups.get(tag - MOVE_TO_GROUP) {
+                            configs.set_workspace_group(&workspace, Some(id), &all);
+                        }
+                    }
+                    _ => return,
                 }
             }
-            _ => {}
+            Some(SidebarMenuTarget::Group(id)) => {
+                let configs = &mut self.sidebar.workspace_configs;
+                match tag {
+                    GROUP_RENAME => {
+                        self.show_rename_group_prompt(id);
+                        return;
+                    }
+                    GROUP_TOGGLE => configs.toggle_group_collapsed(&id),
+                    GROUP_NEW_WORKSPACE => {
+                        self.spawn_workspace_in_group(Some(id));
+                        return;
+                    }
+                    GROUP_MOVE_UP => configs.move_group(&id, -1, &all),
+                    GROUP_MOVE_DOWN => configs.move_group(&id, 1, &all),
+                    GROUP_UNGROUP => configs.ungroup(&id),
+                    GROUP_COLOR_RESET => configs.set_group_color(&id, None),
+                    _ if (GROUP_COLOR_FIRST..GROUP_COLOR_FIRST + COLOR_SWATCHES.len())
+                        .contains(&tag) =>
+                    {
+                        let hex = COLOR_SWATCHES[tag - GROUP_COLOR_FIRST].1;
+                        configs.set_group_color(&id, Some(hex.to_string()));
+                    }
+                    _ => return,
+                }
+            }
+            None => return,
         }
 
+        self.save_workspace_configs();
+        window.invalidate();
+    }
+
+    /// Persist workspace configs and rebuild the sidebar from them.
+    pub fn save_workspace_configs(&mut self) {
         if let Err(e) = self.sidebar.workspace_configs.save() {
             log::error!("Failed to save workspace configs: {:#}", e);
         }
         self.sidebar.invalidate_cache();
-        window.invalidate();
+        if let Some(window) = self.window.as_ref() {
+            window.invalidate();
+        }
+    }
+
+    /// Entries for moving `workspace` between groups, with their tags.
+    /// Records which group each entry stands for in `context_menu_groups`.
+    pub fn group_membership_menu_items(
+        &mut self,
+        workspace: &str,
+    ) -> Vec<::window::ContextMenuItem> {
+        use ::window::ContextMenuItem as Item;
+        let configs = &self.sidebar.workspace_configs;
+        let current = configs.group_id(workspace).map(str::to_string);
+        let all = Mux::get().iter_workspaces();
+        // Offer groups in the order the sidebar shows them.
+        let ids: Vec<String> = configs
+            .layout(&all)
+            .into_iter()
+            .filter_map(|slot| match slot {
+                crate::termwindow::workspace_config::SidebarSlot::Group { id, .. } => Some(id),
+                _ => None,
+            })
+            .take(menu_tags::MOVE_TO_GROUP_LAST - menu_tags::MOVE_TO_GROUP + 1)
+            .collect();
+        let mut items = vec![];
+        for (i, id) in ids.iter().enumerate() {
+            let name = configs
+                .group(id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let label = if current.as_deref() == Some(id.as_str()) {
+                format!("✓ {name}")
+            } else {
+                name
+            };
+            items.push(Item::Entry {
+                label,
+                tag: menu_tags::MOVE_TO_GROUP + i,
+            });
+        }
+        if !items.is_empty() {
+            items.push(Item::Separator);
+        }
+        items.push(Item::Entry {
+            label: "New Group…".into(),
+            tag: menu_tags::NEW_GROUP,
+        });
+        if current.is_some() {
+            items.push(Item::Entry {
+                label: "Remove from Group".into(),
+                tag: menu_tags::REMOVE_FROM_GROUP,
+            });
+        }
+        self.sidebar.context_menu_groups = ids;
+        items
+    }
+
+    /// ⌘⇧G: the group menu for the active workspace, shown beside its card.
+    pub fn show_move_to_group_menu(&mut self) {
+        let workspace = Mux::get().active_workspace();
+        let items = self.group_membership_menu_items(&workspace);
+        let at = self
+            .ui_items
+            .iter()
+            .find(|item| item.item_type == UIItemType::SidebarWorkspace(workspace.clone()))
+            .map(|item| (item.x + item.width.min(48), item.y + 4))
+            .unwrap_or_else(|| {
+                let (left, top) = self.padding_left_top();
+                (
+                    left as usize + self.sidebar_pixel_width() as usize,
+                    top as usize,
+                )
+            });
+        self.sidebar.context_menu_target = Some(SidebarMenuTarget::Workspace(workspace));
+        if let Some(window) = self.window.as_ref() {
+            window.show_context_menu(
+                items,
+                ::window::ScreenPoint::new(at.0 as isize, at.1 as isize),
+            );
+        }
+    }
+
+    /// ⌥⌘G
+    pub fn remove_active_workspace_from_group(&mut self) {
+        let workspace = Mux::get().active_workspace();
+        let all = Mux::get().iter_workspaces();
+        if self
+            .sidebar
+            .workspace_configs
+            .group_id(&workspace)
+            .is_none()
+        {
+            return;
+        }
+        self.sidebar
+            .workspace_configs
+            .set_workspace_group(&workspace, None, &all);
+        self.save_workspace_configs();
+    }
+
+    /// ⌥⌘R
+    pub fn rename_active_workspace_group(&mut self) {
+        let workspace = Mux::get().active_workspace();
+        if let Some(id) = self.sidebar.workspace_configs.group_id(&workspace) {
+            self.show_rename_group_prompt(id.to_string());
+        }
+    }
+
+    /// ⌥⌘E
+    pub fn toggle_active_workspace_group(&mut self) {
+        let workspace = Mux::get().active_workspace();
+        if let Some(id) = self
+            .sidebar
+            .workspace_configs
+            .group_id(&workspace)
+            .map(str::to_string)
+        {
+            self.sidebar.workspace_configs.toggle_group_collapsed(&id);
+            self.save_workspace_configs();
+        }
+    }
+
+    /// Collapse or expand a group from its header.
+    pub fn toggle_group_collapsed(&mut self, id: &str) {
+        self.sidebar.workspace_configs.toggle_group_collapsed(id);
+        self.save_workspace_configs();
+    }
+
+    /// ⌥⌘N: a new workspace in the active workspace's group, or outside
+    /// any group when the active workspace has none.
+    pub fn spawn_workspace_in_active_group(&mut self) {
+        let workspace = Mux::get().active_workspace();
+        let group = self
+            .sidebar
+            .workspace_configs
+            .group_id(&workspace)
+            .map(str::to_string);
+        self.spawn_workspace_in_group(group);
+    }
+
+    /// Spawn a new workspace as the last member of `group`.
+    pub fn spawn_workspace_in_group(&mut self, group: Option<String>) {
+        let Some(group) = group else {
+            self.show_new_workspace_prompt();
+            return;
+        };
+        let name = Mux::get().generate_workspace_name();
+        let all = Mux::get().iter_workspaces();
+        let configs = &mut self.sidebar.workspace_configs;
+        // A recycled name must not inherit a closed workspace's settings.
+        configs.remove_workspace(&name);
+        configs.set_workspace_group(&name, Some(&group), &all);
+        // Show the new member even if its group is collapsed.
+        if configs.group(&group).is_some_and(|g| g.collapsed) {
+            configs.toggle_group_collapsed(&group);
+        }
+        self.save_workspace_configs();
+        self.spawn_named_workspace(name);
+    }
+
+    /// Ask for a name, then put `workspace` in a new group of that name.
+    pub fn show_new_group_prompt(&mut self, workspace: String) {
+        self.show_group_name_prompt(
+            format!("Name a new group for workspace `{workspace}`."),
+            None,
+            Box::new(move |term_window, name| {
+                let all = Mux::get().iter_workspaces();
+                let configs = &mut term_window.sidebar.workspace_configs;
+                if let Some(id) = configs.create_group(&name) {
+                    configs.set_workspace_group(&workspace, Some(&id), &all);
+                    term_window.save_workspace_configs();
+                }
+            }),
+        );
+    }
+
+    /// Ask for a group's new name.
+    pub fn show_rename_group_prompt(&mut self, id: String) {
+        let Some(current) = self
+            .sidebar
+            .workspace_configs
+            .group(&id)
+            .map(|g| g.name.clone())
+        else {
+            return;
+        };
+        self.show_group_name_prompt(
+            format!("Rename group `{current}`."),
+            Some(current),
+            Box::new(move |term_window, name| {
+                term_window
+                    .sidebar
+                    .workspace_configs
+                    .rename_group(&id, &name);
+                term_window.save_workspace_configs();
+            }),
+        );
+    }
+
+    fn show_group_name_prompt(
+        &mut self,
+        description: String,
+        initial: Option<String>,
+        apply: Box<dyn FnOnce(&mut crate::TermWindow, String) + Send + Sync>,
+    ) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+        let gui_win = GuiWin::new(self);
+        let (overlay, future) = crate::overlay::start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::prompt::show_group_name_prompt_overlay(
+                term,
+                description,
+                initial,
+                gui_win,
+                apply,
+            )
+        });
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
     }
 
     /// Close workspace by name (used by context menu handler).

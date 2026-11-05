@@ -33,7 +33,7 @@ cargo test -p mux            # Test a specific crate
 | **Agent status** | `mux/src/agent_status.rs` | State machine: Working/Idle/NeedsInput per pane |
 | **Notifications** | `mux/src/notification.rs` | Dedup store with unread tracking, capped at 1000 |
 | **OSC 7777** | `wezterm-escape-parser/src/osc.rs`, `term/src/terminal.rs` | Custom escape sequence for structured agent status |
-| **Workspace config** | `wezterm-gui/src/termwindow/workspace_config.rs` | Per-workspace display name, accent color, ordering |
+| **Workspace config** | `wezterm-gui/src/termwindow/workspace_config.rs` | Per-workspace display name, accent color, ordering, sidebar groups |
 | **Session persistence** | `mux/src/session.rs` | Save/restore workspaces, scrollback, sidebar cache |
 | **Claude wrapper** | `bin/claude` | Auto-injects hooks into Claude Code via `--settings` |
 | **Hook scripts** | `bin/hooks/on-*.sh` | Emit OSC 7777 + OSC 9 on agent lifecycle events |
@@ -142,7 +142,9 @@ State machine guards in `AgentStatusStore`:
 `paint_sidebar()` — full render pipeline. `sidebar_entry_body_lines()` builds the line list for each card (agent status, background tasks, git branch, PR, ports).
 
 ### `wezterm-gui/src/termwindow/workspace_config.rs`
-Per-workspace customizations persisted to `~/.config/wezmux/workspaces.json`. Display name, accent color (#RRGGBB), ordering. Atomic writes via temp file + rename.
+Per-workspace customizations persisted to `~/.config/wezmux/workspaces.json`. Display name, accent color (#RRGGBB), ordering, sidebar groups. Atomic writes via temp file + rename.
+
+Groups are manual. Membership is `WorkspaceCustomization::group` (a group id); `groups` holds name, color and collapsed state. `layout()` turns the flat `workspace_order` into top-level `SidebarSlot`s: a group appears where its first member falls and pulls its members together. Use `display_order()` (the flattened layout) for anything index-based (Opt+Shift+1–9, "next workspace"), so it matches the sidebar. Empty groups are pruned.
 
 ### `mux/src/session.rs`
 Session save/restore to `~/.local/share/wezterm/session/session.json`. Includes sidebar metadata cache, scrollback (zstd-compressed), window layout.
@@ -183,13 +185,18 @@ config.sidebar = {
 ## Mouse interaction
 
 Right-click on workspace card opens native context menu:
-- Color picker (8 presets + reset)
-- Move up/down/top/bottom
+- Rename, color picker (8 presets + reset), emoji
+- Move to group (submenu) / remove from group
+- Move up/down/top/bottom (within the group)
 - Close workspace
+
+Right-click on a group header: rename, collapse, new workspace in group, group color, move group, ungroup. Left-click on a header collapses it; its "+" spawns a workspace in the group.
+
+Menu selections come back as a tag (`sidebar::menu_tags`) with `SidebarState::context_menu_target`. A native menu swallows the button release, so opening one must call `release_mouse_for_menu()` or the sidebar keeps the mouse captured and the next terminal click is lost.
 
 Left-click switches workspace. Drag on right edge resizes sidebar.
 
-Hit-testing via `UIItemType` variants: `SidebarWorkspace`, `SidebarNewWorkspace`, `SidebarResizeHandle`, `SidebarSplitHorizontal`, `SidebarSplitVertical`, `SidebarBackground`.
+Hit-testing via `UIItemType` variants: `SidebarWorkspace`, `SidebarGroup`, `SidebarGroupAdd`, `SidebarNewWorkspace`, `SidebarResizeHandle`, `SidebarSplitHorizontal`, `SidebarSplitVertical`, `SidebarBackground`.
 
 ## Constraints
 
