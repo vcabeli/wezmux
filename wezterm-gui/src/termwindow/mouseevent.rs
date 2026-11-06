@@ -647,7 +647,8 @@ impl super::TermWindow {
     }
 
     fn show_group_context_menu(&mut self, id: String, event: MouseEvent, context: &dyn WindowOps) {
-        use crate::termwindow::sidebar::{menu_tags::*, SidebarMenuTarget, COLOR_SWATCHES};
+        use crate::termwindow::sidebar::menu_tags::*;
+        use crate::termwindow::sidebar::{SidebarMenuTarget, COLOR_SWATCHES};
         use ::window::ContextMenuItem as NativeItem;
 
         let collapsed = self
@@ -768,7 +769,8 @@ impl super::TermWindow {
         event: MouseEvent,
         context: &dyn WindowOps,
     ) {
-        use crate::termwindow::sidebar::{menu_tags::*, SidebarMenuTarget, COLOR_SWATCHES};
+        use crate::termwindow::sidebar::menu_tags::*;
+        use crate::termwindow::sidebar::{SidebarMenuTarget, COLOR_SWATCHES};
         use ::window::ContextMenuItem as NativeItem;
 
         let mut color_items = vec![
