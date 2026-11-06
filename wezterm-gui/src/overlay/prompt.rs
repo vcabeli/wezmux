@@ -117,6 +117,76 @@ pub fn show_workspace_nickname_prompt_overlay(
     Ok(())
 }
 
+/// Prompt for a sidebar group name; `apply` runs with a non-blank name.
+/// Esc or a blank line changes nothing.
+pub fn show_group_name_prompt_overlay(
+    mut term: TermWizTerminal,
+    description: String,
+    initial: Option<String>,
+    window: GuiWin,
+    apply: Box<dyn FnOnce(&mut crate::TermWindow, String) + Send + Sync>,
+) -> anyhow::Result<()> {
+    term.no_grab_mouse_in_raw_mode();
+    term.render(&[Change::Text(format!(
+        "{description}\r\nPress Esc to cancel.\r\n"
+    ))])?;
+
+    let mut host = PromptHost::new();
+    let mut editor = LineEditor::new(&mut term);
+    editor.set_prompt("group name> ");
+    let line = editor.read_line_with_optional_initial_value(&mut host, initial.as_deref())?;
+
+    promise::spawn::spawn_into_main_thread(async move {
+        if let Some(name) = line
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+        {
+            window
+                .window
+                .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
+                    apply(term_window, name);
+                })));
+        }
+        anyhow::Result::<()>::Ok(())
+    })
+    .detach();
+
+    Ok(())
+}
+
+/// Prompt for a line of text; `apply` runs with it, blank included.
+/// Esc changes nothing.
+pub fn show_text_prompt_overlay(
+    mut term: TermWizTerminal,
+    description: String,
+    prompt: String,
+    initial: Option<String>,
+    window: GuiWin,
+    apply: Box<dyn FnOnce(&mut crate::TermWindow, String) + Send + Sync>,
+) -> anyhow::Result<()> {
+    term.no_grab_mouse_in_raw_mode();
+    term.render(&[Change::Text(description)])?;
+
+    let mut host = PromptHost::new();
+    let mut editor = LineEditor::new(&mut term);
+    editor.set_prompt(&prompt);
+    let line = editor.read_line_with_optional_initial_value(&mut host, initial.as_deref())?;
+
+    promise::spawn::spawn_into_main_thread(async move {
+        if let Some(line) = line {
+            window
+                .window
+                .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
+                    apply(term_window, line);
+                })));
+        }
+        anyhow::Result::<()>::Ok(())
+    })
+    .detach();
+
+    Ok(())
+}
+
 pub fn show_new_workspace_prompt_overlay(
     mut term: TermWizTerminal,
     window: GuiWin,

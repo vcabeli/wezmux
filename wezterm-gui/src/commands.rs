@@ -764,6 +764,48 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Shell"],
             icon: Some("md_folder_plus"),
         },
+        // Group shortcuts use physical keys: with Option held, a mapped
+        // letter can compose into another character (AZERTY ⌥N is ~).
+        SpawnWorkspaceInGroup => CommandDef {
+            brief: "New Workspace in Group".into(),
+            doc: "Creates a workspace in the active workspace's sidebar group".into(),
+            keys: vec![(Modifiers::SUPER.union(Modifiers::ALT), "phys:N".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell", "Workspace Groups"],
+            icon: Some("md_folder_plus"),
+        },
+        MoveWorkspaceToGroup => CommandDef {
+            brief: "Move Workspace to Group…".into(),
+            doc: "Shows the sidebar groups to move the active workspace into".into(),
+            keys: vec![(Modifiers::SUPER.union(Modifiers::SHIFT), "phys:G".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell", "Workspace Groups"],
+            icon: None,
+        },
+        RemoveWorkspaceFromGroup => CommandDef {
+            brief: "Remove Workspace from Group".into(),
+            doc: "Takes the active workspace out of its sidebar group".into(),
+            keys: vec![(Modifiers::SUPER.union(Modifiers::ALT), "phys:G".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell", "Workspace Groups"],
+            icon: None,
+        },
+        RenameWorkspaceGroup => CommandDef {
+            brief: "Rename Workspace Group…".into(),
+            doc: "Renames the active workspace's sidebar group".into(),
+            keys: vec![(Modifiers::SUPER.union(Modifiers::ALT), "phys:R".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell", "Workspace Groups"],
+            icon: None,
+        },
+        ToggleWorkspaceGroupCollapsed => CommandDef {
+            brief: "Collapse or Expand Workspace Group".into(),
+            doc: "Collapses or expands the active workspace's sidebar group".into(),
+            keys: vec![(Modifiers::SUPER.union(Modifiers::ALT), "phys:E".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell", "Workspace Groups"],
+            icon: None,
+        },
         ToggleSidebar => CommandDef {
             brief: "Toggle Workspace Sidebar".into(),
             doc: "Shows or hides the workspace sidebar".into(),
@@ -771,6 +813,16 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             args: &[ArgType::ActiveWindow],
             menubar: &["View"],
             icon: Some("md_dock_left"),
+        },
+        ResumeAgents => CommandDef {
+            brief: "Resume Agent Sessions".into(),
+            doc: "Re-runs the Claude Code and Codex resume commands left in \
+                  panes after a restart, with extra flags you choose"
+                .into(),
+            keys: vec![],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Shell"],
+            icon: Some("md_restart"),
         },
         JumpToUnreadNotification => CommandDef {
             brief: "Jump to Unread Notification".into(),
@@ -2082,8 +2134,14 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         SpawnTab(SpawnTabDomain::CurrentPaneDomain),
         SpawnWindow,
         PromptNewWorkspace,
+        SpawnWorkspaceInGroup,
+        MoveWorkspaceToGroup,
+        RemoveWorkspaceFromGroup,
+        RenameWorkspaceGroup,
+        ToggleWorkspaceGroupCollapsed,
         ToggleSidebar,
         JumpToUnreadNotification,
+        ResumeAgents,
         SplitVertical(SpawnCommand {
             domain: SpawnTabDomain::CurrentPaneDomain,
             ..Default::default()

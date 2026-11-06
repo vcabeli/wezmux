@@ -538,7 +538,20 @@ pub enum KeyAssignment {
     ToggleFullScreen,
     ToggleSidebar,
     JumpToUnreadNotification,
+    /// Re-run the resume command Claude Code / Codex printed on quit, in
+    /// every pane that is back at its shell with one.
+    ResumeAgents,
     PromptNewWorkspace,
+    /// New workspace in the active workspace's sidebar group.
+    SpawnWorkspaceInGroup,
+    /// Menu of sidebar groups to move the active workspace into.
+    MoveWorkspaceToGroup,
+    /// Take the active workspace out of its sidebar group.
+    RemoveWorkspaceFromGroup,
+    /// Rename the active workspace's sidebar group.
+    RenameWorkspaceGroup,
+    /// Collapse or expand the active workspace's sidebar group.
+    ToggleWorkspaceGroupCollapsed,
     ToggleAlwaysOnTop,
     ToggleAlwaysOnBottom,
     SetWindowLevel(WindowLevel),

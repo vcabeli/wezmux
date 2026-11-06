@@ -68,6 +68,7 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::input::LastMouseClick;
 use wezterm_term::{Alert, Progress, StableRowIndex, TerminalConfiguration, TerminalSize};
 
+mod agent_resume;
 pub mod background;
 pub mod box_model;
 pub mod charselect;
@@ -165,11 +166,17 @@ pub enum UIItemType {
     TabBar(TabBarItem),
     CloseTab(usize),
     SidebarWorkspace(String),
+    /// A group's header row; carries the group id.
+    SidebarGroup(String),
+    /// The "+" on a group's header: new workspace in that group.
+    SidebarGroupAdd(String),
     SidebarCloseWorkspace(String),
     SidebarNewWorkspace,
     SidebarNotificationBell,
     SidebarSplitHorizontal,
     SidebarSplitVertical,
+    /// Toolbar button: resume agent sessions left from the last quit.
+    SidebarResumeAgents,
     SidebarSettings,
     SidebarResizeHandle,
     SidebarBackground,
@@ -2891,9 +2898,15 @@ impl TermWindow {
             CloseCurrentPane { confirm } => self.close_current_pane(*confirm),
             Nop | DisableDefaultAssignment => {}
             PromptNewWorkspace => self.show_new_workspace_prompt(),
+            SpawnWorkspaceInGroup => self.spawn_workspace_in_active_group(),
+            MoveWorkspaceToGroup => self.show_move_to_group_menu(),
+            RemoveWorkspaceFromGroup => self.remove_active_workspace_from_group(),
+            RenameWorkspaceGroup => self.rename_active_workspace_group(),
+            ToggleWorkspaceGroupCollapsed => self.toggle_active_workspace_group(),
             ReloadConfiguration => config::reload(),
             ToggleSidebar => self.toggle_sidebar(),
             JumpToUnreadNotification => self.jump_to_unread_notification(),
+            ResumeAgents => self.resume_agents(),
             MoveTab(n) => self.move_tab(*n)?,
             MoveTabRelative(n) => self.move_tab_relative(*n)?,
             ScrollByPage(n) => self.scroll_by_page(**n, pane)?,

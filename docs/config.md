@@ -53,7 +53,7 @@ config.sidebar = {
 | Key | Default | Used for |
 |-----|---------|----------|
 | `bg` | `#3a3a41` | Sidebar background |
-| `card_bg` | `#303036` | Inactive card background |
+| `card_bg` | `#303036` | Unused: cards are drawn over `bg` |
 | `card_hover` | `#44444b` | Card background on hover |
 | `accent` | `#0091ff` | Active card bg, accent bar, unread badge, "needs input" indicator |
 | `text` | `rgba(255,255,255,0.9)` | Primary text on inactive cards |
