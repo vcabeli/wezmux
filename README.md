@@ -51,7 +51,9 @@ Because cmux was disappointing (and I don't need a browser in my terminal) and I
 | ``Option+ ` `` | Show/hide Wezmux from anywhere |
 | `Cmd+B` | Toggle sidebar |
 | `Option+K/J` | Switch to previous/next workspace |
-| `Option+1..9` | Switch to workspace by index |
+| `Option+1..8` | Switch to workspace by sidebar position |
+| `Option+Shift+1..9` | Switch to workspace `1`–`9`, creating it if needed |
+| `Option+Shift+0` | Fuzzy-find a workspace |
 | `Option+U` | Jump to last unread notification |
 
 ## Install
