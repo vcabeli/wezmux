@@ -77,8 +77,13 @@ Active card text is always white — it's derived automatically to ensure contra
 | `Cmd+B` | Toggle sidebar |
 | `Option+K` | Switch to previous workspace |
 | `Option+J` | Switch to next workspace |
-| `Option+1..9` | Switch to workspace by index |
+| `Option+1..8` | Switch to workspace by sidebar position |
+| `Option+Shift+1..9` | Switch to the workspace named `1`–`9`, creating it if needed |
+| `Option+Shift+0` | Fuzzy-find a workspace (launcher) |
 | `Option+U` | Jump to last unread notification |
+
+The `Option+Shift` bindings live in the `~/.wezmux.lua` that Wezmux writes on first
+launch (`Ctrl+Alt` on Windows), so an older or hand-written config may not have them.
 
 ### Standard shortcuts
 
